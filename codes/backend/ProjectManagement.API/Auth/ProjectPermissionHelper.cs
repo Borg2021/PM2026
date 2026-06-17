@@ -66,9 +66,10 @@ public static class ProjectPermissionHelper
         if (await IsProjectMemberAsync(db, projectId, userId)) return true;
 
         // 部门负责人可见性：若用户是某部门负责人，且项目中有成员属于该部门（含子部门），则可查看
-        var leaderDeptIds = await db.Departments
-            .Where(d => d.LeaderId == userId)
-            .Select(d => d.Id)
+        var leaderDeptIds = await db.DepartmentLeaders
+            .Where(l => l.UserId == userId)
+            .Select(l => l.DepartmentId)
+            .Distinct()
             .ToListAsync();
         if (leaderDeptIds.Count > 0)
         {

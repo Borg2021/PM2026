@@ -139,9 +139,10 @@ public static class ProjectDataScopeResolver
     /// <summary>获取用户担任负责人的部门及其所有子孙部门 ID</summary>
     private static async Task<List<long>> GetLeaderDeptTreeIdsAsync(AppDbContext db, long userId)
     {
-        var leaderDeptIds = await db.Departments
-            .Where(d => d.LeaderId == userId)
-            .Select(d => d.Id)
+        var leaderDeptIds = await db.DepartmentLeaders
+            .Where(l => l.UserId == userId)
+            .Select(l => l.DepartmentId)
+            .Distinct()
             .ToListAsync();
         if (leaderDeptIds.Count == 0) return new List<long>();
 
