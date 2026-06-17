@@ -103,6 +103,15 @@ public class AppDbContext : DbContext
                 .OnDelete(DeleteBehavior.Cascade);
         });
 
+        modelBuilder.Entity<Department>(e =>
+        {
+            e.HasOne(d => d.Leader)
+                .WithMany()
+                .HasForeignKey(d => d.LeaderId)
+                .IsRequired(false);
+            e.HasIndex(d => d.LeaderId);
+        });
+
         modelBuilder.Entity<PlanBundle>(e =>
         {
             e.HasMany(b => b.Items)
