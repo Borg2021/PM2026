@@ -1127,7 +1127,7 @@ public class ProjectController : ControllerBase
 
         if (item.Required)
         {
-            // 必填项：删除所有版本但保留清单项
+            // 必填项：删除所有版本及物理文件，但保留清单项
             foreach (var v in item.Versions)
             {
                 foreach (var vf in v.Files)
@@ -1159,6 +1159,7 @@ public class ProjectController : ControllerBase
 
         var action = item.Required ? "清除文件版本" : "删除文件项";
         await LogOp(id, action, $"删除文件「{item.FileName}」{(versionCount > 0 ? $"(含{versionCount}个版本)" : "")}");
+
         return Ok(new { code = 0, message = "success" });
     }
 
