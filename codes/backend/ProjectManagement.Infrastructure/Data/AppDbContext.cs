@@ -41,6 +41,7 @@ public class AppDbContext : DbContext
     public DbSet<ProjectManagement.Domain.Entities.Function> Functions => Set<ProjectManagement.Domain.Entities.Function>();
     public DbSet<ProjectFileItem> ProjectFileItems => Set<ProjectFileItem>();
     public DbSet<ProjectFileVersion> ProjectFileVersions => Set<ProjectFileVersion>();
+    public DbSet<ProjectFileVersionFile> ProjectFileVersionFiles => Set<ProjectFileVersionFile>();
     public DbSet<UserFunction> UserFunctions => Set<UserFunction>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -253,9 +254,20 @@ public class AppDbContext : DbContext
         {
             e.ToTable("ProjectFileVersions");
             e.HasKey(x => x.Id);
-            e.Property(x => x.FilePath).IsRequired().HasMaxLength(500);
             e.HasIndex(x => x.ProjectFileItemId);
             e.HasIndex(x => new { x.ProjectFileItemId, x.VersionNumber }).IsUnique();
+        });
+
+        modelBuilder.Entity<ProjectFileVersionFile>(e =>
+        {
+            e.ToTable("ProjectFileVersionFiles");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.FilePath).IsRequired().HasMaxLength(500);
+            e.HasOne(x => x.Version)
+                .WithMany(v => v.Files)
+                .HasForeignKey(x => x.ProjectFileVersionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.ProjectFileVersionId);
         });
     }
 }
