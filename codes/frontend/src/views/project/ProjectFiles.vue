@@ -35,6 +35,11 @@ const versionDialogVisible = ref(false)
 const versionDialogTitle = ref('')
 const versionDialogProjectId = ref(0)
 const versionDialogItemId = ref<number | null>(null)
+const downloadDialogVisible = ref(false)
+const downloadDialogTitle = ref('')
+const downloadDialogFiles = ref<any[]>([])
+const downloadDialogProjectId = ref(0)
+const downloadDialogItemId = ref<number | null>(null)
 const versionList = ref<any[]>([])
 
 /* ───────── 搜索表单 ───────── */
@@ -106,9 +111,33 @@ function formatSize(bytes: number) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
-function handleDownload(item: MyFileItem) {
+async function handleDownload(item: MyFileItem) {
   if (!item.latestVersion) return
-  window.open(getFileDownloadUrl(item.projectId, item.id), '_blank')
+  // 优先用 latestVersion 中的 files
+  if ((item.latestVersion as any).files?.length) {
+    downloadDialogTitle.value = `文件列表 · ${item.fileName}（v${item.latestVersion.versionNumber}）`
+    downloadDialogFiles.value = (item.latestVersion as any).files
+    downloadDialogProjectId.value = item.projectId
+    downloadDialogItemId.value = item.id
+    downloadDialogVisible.value = true
+    return
+  }
+  // 兜底：请求版本列表
+  try {
+    const res = await getProjectFileVersions(item.projectId, item.id)
+    const versions = res.data ?? []
+    if (versions.length > 0 && versions[0].files?.length) {
+      downloadDialogTitle.value = `文件列表 · ${item.fileName}（v${versions[0].versionNumber}）`
+      downloadDialogFiles.value = versions[0].files
+      downloadDialogProjectId.value = item.projectId
+      downloadDialogItemId.value = item.id
+      downloadDialogVisible.value = true
+    } else {
+      window.open(getFileDownloadUrl(item.projectId, item.id), '_blank')
+    }
+  } catch {
+    window.open(getFileDownloadUrl(item.projectId, item.id), '_blank')
+  }
 }
 
 /* ───────── 搜索 / 重置 ───────── */
@@ -130,13 +159,16 @@ function handleReset() {
 async function handleUpload(item: MyFileItem) {
   const input = document.createElement('input')
   input.type = 'file'
+  input.multiple = true
   input.accept = '.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.ppt,.pptx,.txt,.jpg,.png'
   input.onchange = async () => {
-    const file = input.files?.[0]
-    if (!file) return
+    const fileList = input.files
+    if (!fileList || fileList.length === 0) return
+    const files = Array.from(fileList)
+
     let remark = ''
     try {
-      const { value } = await ElMessageBox.prompt('版本说明（可选）', '上传文件', {
+      const { value } = await ElMessageBox.prompt('版本说明（可选）', `上传文件（已选择${files.length}个文件）`, {
         confirmButtonText: '上传', cancelButtonText: '取消',
         inputPlaceholder: '本次版本的变更说明...'
       })
@@ -146,8 +178,8 @@ async function handleUpload(item: MyFileItem) {
     uploadingItemId.value = item.id
     uploadProgress.value = 0
     try {
-      await uploadProjectFileItem(item.projectId, item.id, file, remark, (pct) => { uploadProgress.value = pct })
-      ElMessage.success('上传成功')
+      await uploadProjectFileItem(item.projectId, item.id, files, remark, (pct) => { uploadProgress.value = pct })
+      ElMessage.success(`上传成功（${files.length}个文件）`)
       await loadData()
     } catch { /* 错误由拦截器处理 */ }
     finally { uploadingItemId.value = null; uploadProgress.value = 0 }
@@ -168,9 +200,9 @@ async function openVersionDialog(item: MyFileItem) {
   } catch { versionList.value = [] }
 }
 
-function handleVersionDownload(version: any) {
+function handleVersionDownload(versionFile: any) {
   if (!versionDialogItemId.value) return
-  window.open(getFileDownloadUrl(versionDialogProjectId.value, versionDialogItemId.value, version.versionNumber), '_blank')
+  window.open(getFileDownloadUrl(versionDialogProjectId.value, versionDialogItemId.value, undefined, versionFile.id), '_blank')
 }
 
 function formatDateTime(dt: string | undefined | null): string {
@@ -319,22 +351,48 @@ onMounted(loadData)
     </el-card>
 
     <!-- 版本历史对话框 -->
-    <el-dialog v-model="versionDialogVisible" :title="versionDialogTitle" width="780px">
+    <el-dialog v-model="versionDialogVisible" :title="versionDialogTitle" width="900px">
       <el-table :data="versionList" border size="small" style="width:100%">
         <el-table-column label="版本" width="70" align="center">
           <template #default="{ row }">v{{ row.versionNumber }}</template>
         </el-table-column>
-        <el-table-column label="大小" width="100" align="right">
-          <template #default="{ row }">{{ (row.fileSize / 1024).toFixed(1) }} KB</template>
-        </el-table-column>
-        <el-table-column label="上传人" width="120" prop="uploadedByName" />
-        <el-table-column label="上传时间" width="170">
+        <el-table-column label="上传人" width="100" prop="uploadedByName" />
+        <el-table-column label="上传时间" width="160">
           <template #default="{ row }">{{ formatDateTime(row.uploadedAt) }}</template>
         </el-table-column>
-        <el-table-column label="说明" min-width="150" prop="remark" show-overflow-tooltip />
-        <el-table-column label="操作" width="80" fixed="right">
+        <el-table-column label="说明" min-width="120" prop="remark" show-overflow-tooltip />
+        <el-table-column label="文件" min-width="280">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="handleVersionDownload(row)">下载</el-button>
+            <template v-if="row.files?.length">
+              <div v-for="f in row.files" :key="f.id" style="display:flex;align-items:center;justify-content:space-between;padding:2px 0">
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px">
+                  {{ f.originalFileName }}
+                  <span style="color:#909399;font-size:12px;margin-left:4px">
+                    {{ f.fileSize < 1024 ? f.fileSize + 'B' : (f.fileSize / 1024).toFixed(1) + 'KB' }}
+                  </span>
+                </span>
+                <el-button size="small" type="primary" link @click="handleVersionDownload(f)">下载</el-button>
+              </div>
+            </template>
+            <span v-else style="color:#c0c4cc">-</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <!-- 下载文件选择对话框 -->
+    <el-dialog v-model="downloadDialogVisible" :title="downloadDialogTitle" width="560px">
+      <el-table :data="downloadDialogFiles" border size="small" style="width:100%" empty-text="该版本没有文件">
+        <el-table-column type="index" label="序号" width="55" />
+        <el-table-column prop="originalFileName" label="文件名" min-width="250" show-overflow-tooltip />
+        <el-table-column label="文件大小" width="110" align="right">
+          <template #default="{ row }">
+            {{ row.fileSize < 1024 ? row.fileSize + ' B' : row.fileSize < 1024 * 1024 ? (row.fileSize / 1024).toFixed(1) + ' KB' : (row.fileSize / (1024 * 1024)).toFixed(1) + ' MB' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" link @click="window.open(getFileDownloadUrl(downloadDialogProjectId, downloadDialogItemId!, undefined, row.id), '_blank')">下载</el-button>
           </template>
         </el-table-column>
       </el-table>
