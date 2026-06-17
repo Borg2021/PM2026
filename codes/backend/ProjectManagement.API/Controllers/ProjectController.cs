@@ -905,7 +905,7 @@ public class ProjectController : ControllerBase
     }
 
     [HttpPost("{id:long}/file-items/{itemId:long}/upload")]
-    public async Task<IActionResult> UploadFileItem(long id, long itemId, IFormFile file, [FromForm] string? remark, CancellationToken cancellationToken)
+    public async Task<IActionResult> UploadFileItem(long id, long itemId, List<IFormFile> files, [FromForm] string? remark, CancellationToken cancellationToken)
     {
         var (userId, realName) = GetUserInfo();
         var project = await _db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
@@ -920,23 +920,15 @@ public class ProjectController : ControllerBase
         if (!isProjectManager && !isAssignee)
             return Forbid();
 
-        // 保存物理文件
-        var ext = Path.GetExtension(file.FileName);
-        var fileName = $"{Guid.NewGuid():N}{ext}";
-        var relativeDir = Path.Combine("ProjectFiles", id.ToString());
-        var uploadDir = Path.Combine(_env.ContentRootPath, relativeDir);
-        Directory.CreateDirectory(uploadDir);
-        var filePath = Path.Combine(uploadDir, fileName);
-        using (var stream = new FileStream(filePath, FileMode.Create))
-        {
-            await file.CopyToAsync(stream, cancellationToken);
-        }
+        if (files == null || files.Count == 0)
+            return Ok(new { code = 400, message = "请选择至少一个文件" });
 
         // 查询最大版本号
         var maxVersion = await _db.ProjectFileVersions
             .Where(v => v.ProjectFileItemId == itemId)
             .MaxAsync(v => (int?)v.VersionNumber) ?? 0;
 
+        // 创建版本记录
         var version = new ProjectFileVersion
         {
             ProjectFileItemId = itemId,
@@ -946,28 +938,54 @@ public class ProjectController : ControllerBase
             UploadedAt = DateTime.Now,
             Remark = remark
         };
-        var versionFile = new ProjectFileVersionFile
-        {
-            FilePath = $"{relativeDir}/{fileName}",
-            OriginalFileName = file.FileName,
-            FileSize = file.Length,
-            FileExt = ext
-        };
-        version.Files.Add(versionFile);
         _db.ProjectFileVersions.Add(version);
+        await _db.SaveChangesAsync(); // 先保存以获取 version.Id
+
+        // 保存每个物理文件
+        var relativeDir = Path.Combine("ProjectFiles", id.ToString());
+        var uploadDir = Path.Combine(_env.ContentRootPath, relativeDir);
+        Directory.CreateDirectory(uploadDir);
+
+        var savedFiles = new List<object>();
+        foreach (var file in files)
+        {
+            var ext = Path.GetExtension(file.FileName);
+            var fileName = $"{Guid.NewGuid():N}{ext}";
+            var filePath = Path.Combine(uploadDir, fileName);
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await file.CopyToAsync(stream, cancellationToken);
+            }
+
+            var versionFile = new ProjectFileVersionFile
+            {
+                ProjectFileVersionId = version.Id,
+                FilePath = $"{relativeDir}/{fileName}",
+                OriginalFileName = file.FileName,
+                FileSize = file.Length,
+                FileExt = ext
+            };
+            _db.ProjectFileVersionFiles.Add(versionFile);
+            savedFiles.Add(new
+            {
+                id = versionFile.Id,
+                originalFileName = versionFile.OriginalFileName,
+                fileSize = versionFile.FileSize,
+                fileExt = versionFile.FileExt
+            });
+        }
         await _db.SaveChangesAsync();
 
         // 更新 LatestVersionId
         item.LatestVersionId = version.Id;
         await _db.SaveChangesAsync();
 
-        await LogOp(id, "上传文件", $"上传文件「{item.FileName}」v{version.VersionNumber}");
+        await LogOp(id, "上传文件", $"上传文件「{item.FileName}」v{version.VersionNumber}（{files.Count}个文件）");
         return Ok(new { code = 0, message = "success", data = new
         {
             versionId = version.Id,
             versionNumber = version.VersionNumber,
-            fileSize = versionFile.FileSize,
-            fileExt = versionFile.FileExt,
+            files = savedFiles,
             uploadedByName = version.UploadedByName,
             uploadedAt = version.UploadedAt
         }});
