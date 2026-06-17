@@ -215,9 +215,33 @@ CREATE UNIQUE INDEX [IX_UserFunctions_UserId_FunctionId] ON [UserFunctions] ([Us
         AddColumnIfNotExists(db, "Projects", "CustomerContactEmail", "NVARCHAR(MAX) NULL");
         AddColumnIfNotExists(db, "Projects", "OwnerContactPhone", "NVARCHAR(MAX) NULL");
         AddColumnIfNotExists(db, "Projects", "BusinessContactEmail", "NVARCHAR(MAX) NULL");
-        AddColumnIfNotExists(db, "Departments", "LeaderId", "BIGINT NULL");
-        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Departments_LeaderId' AND object_id = OBJECT_ID(N'[dbo].[Departments]'))
-CREATE INDEX [IX_Departments_LeaderId] ON [Departments] ([LeaderId])");
+        // 创建 DepartmentLeaders 表（多负责人）
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DepartmentLeaders]') AND type = 'U')
+CREATE TABLE [DepartmentLeaders] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [DepartmentId] BIGINT NOT NULL, [UserId] BIGINT NOT NULL, CONSTRAINT [PK_DepartmentLeaders] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([DepartmentId]) REFERENCES [Departments]([Id]) ON DELETE CASCADE, FOREIGN KEY ([UserId]) REFERENCES [Users]([Id]))");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DepartmentLeaders_DepartmentId' AND object_id = OBJECT_ID(N'[dbo].[DepartmentLeaders]'))
+CREATE INDEX [IX_DepartmentLeaders_DepartmentId] ON [DepartmentLeaders] ([DepartmentId])");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DepartmentLeaders_UserId' AND object_id = OBJECT_ID(N'[dbo].[DepartmentLeaders]'))
+CREATE INDEX [IX_DepartmentLeaders_UserId] ON [DepartmentLeaders] ([UserId])");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DepartmentLeaders_DeptId_UserId' AND object_id = OBJECT_ID(N'[dbo].[DepartmentLeaders]'))
+CREATE UNIQUE INDEX [IX_DepartmentLeaders_DeptId_UserId] ON [DepartmentLeaders] ([DepartmentId], [UserId])");
+
+        // 迁移旧数据：将 Departments.LeaderId 迁移到 DepartmentLeaders
+        {
+            var conn2 = db.Database.GetDbConnection();
+            var wasOpen2 = conn2.State == System.Data.ConnectionState.Open;
+            if (!wasOpen2) conn2.Open();
+            using var cmd2 = conn2.CreateCommand();
+            cmd2.CommandText = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Departments' AND COLUMN_NAME = 'LeaderId'";
+            var oldLeaderIdExists = (int)cmd2.ExecuteScalar()! > 0;
+            if (!wasOpen2) conn2.Close();
+            if (oldLeaderIdExists)
+            {
+                db.Database.ExecuteSqlRaw(@"INSERT INTO [DepartmentLeaders] ([DepartmentId], [UserId])
+SELECT [Id], [LeaderId] FROM [Departments] WHERE [LeaderId] IS NOT NULL
+AND NOT EXISTS (SELECT 1 FROM [DepartmentLeaders] WHERE [DepartmentLeaders].[DepartmentId] = [Departments].[Id] AND [DepartmentLeaders].[UserId] = [Departments].[LeaderId])");
+            }
+        }
+
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[FileTemplateItems]') AND type = 'U')
 CREATE TABLE [FileTemplateItems] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [TemplateId] BIGINT NOT NULL, [SortOrder] INT NOT NULL DEFAULT 0, [FileName] NVARCHAR(200) NOT NULL DEFAULT '', [Required] INT NOT NULL DEFAULT 0, [DeptId] BIGINT NULL, [DeptName] NVARCHAR(MAX) NULL, [Remark] NVARCHAR(MAX) NULL, [IsPublic] INT NOT NULL DEFAULT 1, [ViewRoles] NVARCHAR(MAX) NULL, CONSTRAINT [PK_FileTemplateItems] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([TemplateId]) REFERENCES [Templates]([Id]) ON DELETE CASCADE)");
         AddColumnIfNotExists(db, "FileTemplateItems", "Remark", "NVARCHAR(MAX) NULL");
