@@ -12,6 +12,9 @@ public static class ProjectDataScopeFilter
         if (filter == null || filter.Bypass) return query;
         if (filter.WorkbenchSelfOnly) return ApplySelf(query, filter.UserId);
 
+        // 保存原始 query 用于后续部门负责人 Union
+        var baseQuery = query;
+
         query = filter.Scope switch
         {
             DataScopeType.All => query,
@@ -22,6 +25,17 @@ public static class ProjectDataScopeFilter
             DataScopeType.DeptAndChildren => ApplyDeptTree(query, db, filter),
             _ => query.Where(p => false)
         };
+
+        // 部门负责人可见性：管辖部门成员参与的项目也对用户可见（Union 取并集）
+        if (filter.LeaderDeptIds.Count > 0)
+        {
+            var ids = filter.LeaderDeptIds;
+            var leaderQuery = baseQuery.Where(p =>
+                p.Members.Any(m =>
+                    m.MemberId != null &&
+                    db.Users.Any(u => u.Id == m.MemberId && u.DepartmentId != null && ids.Contains(u.DepartmentId.Value))));
+            query = query.Union(leaderQuery);
+        }
 
         // 非管理员统一过滤未激活(0)，但项目经理可看到自己负责的未激活项目
         query = query.Where(p => p.Status != 0 || p.ProjectManagerId == filter.UserId);
@@ -36,6 +50,21 @@ public static class ProjectDataScopeFilter
     {
         if (filter.Bypass) return true;
         if (filter.WorkbenchSelfOnly) return await IsSelfRelatedAsync(db, project.Id, filter.UserId);
+
+        // 部门负责人可见性检查
+        if (filter.LeaderDeptIds.Count > 0)
+        {
+            var memberIds = await db.ProjectMembers
+                .Where(m => m.ProjectId == project.Id && m.MemberId != null)
+                .Select(m => m.MemberId!.Value)
+                .ToListAsync();
+            if (memberIds.Count > 0)
+            {
+                var membersInDept = await db.Users
+                    .AnyAsync(u => memberIds.Contains(u.Id) && u.DepartmentId != null && filter.LeaderDeptIds.Contains(u.DepartmentId.Value));
+                if (membersInDept) return true;
+            }
+        }
 
         return filter.Scope switch
         {
