@@ -233,6 +233,28 @@ CREATE UNIQUE INDEX [IX_ProjectFileVersions_ItemId_Version] ON [ProjectFileVersi
 CREATE INDEX [IX_ProjectFileItems_ProjectId] ON [ProjectFileItems] ([ProjectId])");
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectFileVersions_ProjectFileItemId' AND object_id = OBJECT_ID(N'[dbo].[ProjectFileVersions]'))
 CREATE INDEX [IX_ProjectFileVersions_ProjectFileItemId] ON [ProjectFileVersions] ([ProjectFileItemId])");
+
+        // 新增 ProjectFileVersionFiles 表（多文件支持）
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ProjectFileVersionFiles]') AND type = 'U')
+CREATE TABLE [ProjectFileVersionFiles] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [ProjectFileVersionId] BIGINT NOT NULL, [FilePath] NVARCHAR(500) NOT NULL DEFAULT '', [OriginalFileName] NVARCHAR(MAX) NOT NULL DEFAULT '', [FileSize] BIGINT NOT NULL DEFAULT 0, [FileExt] NVARCHAR(MAX) NULL, CONSTRAINT [PK_ProjectFileVersionFiles] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([ProjectFileVersionId]) REFERENCES [ProjectFileVersions]([Id]) ON DELETE CASCADE)");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectFileVersionFiles_ProjectFileVersionId' AND object_id = OBJECT_ID(N'[dbo].[ProjectFileVersionFiles]'))
+CREATE INDEX [IX_ProjectFileVersionFiles_ProjectFileVersionId] ON [ProjectFileVersionFiles] ([ProjectFileVersionId])");
+
+        // 将 ProjectFileVersions 中的单文件数据迁移到 ProjectFileVersionFiles（仅对有 FilePath 列的旧表执行）
+        var migrationConn = db.Database.GetDbConnection();
+        var migrationWasOpen = migrationConn.State == System.Data.ConnectionState.Open;
+        if (!migrationWasOpen) migrationConn.Open();
+        using var migrationCmd = migrationConn.CreateCommand();
+        migrationCmd.CommandText = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FilePath'";
+        var oldFilePathExists = (int)migrationCmd.ExecuteScalar()! > 0;
+        if (!migrationWasOpen) migrationConn.Close();
+        if (oldFilePathExists)
+        {
+            db.Database.ExecuteSqlRaw(@"INSERT INTO [ProjectFileVersionFiles] ([ProjectFileVersionId], [FilePath], [OriginalFileName], [FileSize], [FileExt])
+SELECT [Id], [FilePath], [OriginalFileName], [FileSize], [FileExt] FROM [ProjectFileVersions]
+WHERE EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FilePath')
+AND NOT EXISTS (SELECT 1 FROM [ProjectFileVersionFiles] WHERE [ProjectFileVersionFiles].[ProjectFileVersionId] = [ProjectFileVersions].[Id])");
+        }
     }
 
     await DbInitializer.EnsureSeedAsync(db);
