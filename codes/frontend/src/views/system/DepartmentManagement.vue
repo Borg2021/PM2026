@@ -125,16 +125,17 @@ onMounted(() => { fetchData() })
       <el-button type="danger" @click="handleCreate">+ 新建部门</el-button>
     </div>
 
-    <el-table
-      :data="treeData"
-      v-loading="loading"
-      row-key="id"
-      :tree-props="{ children: 'children' }"
-      default-expand-all
-      stripe
-      border
-      style="width: 100%"
-    >
+    <div class="table-wrapper">
+      <el-table
+        :data="treeData"
+        v-loading="loading"
+        row-key="id"
+        :tree-props="{ children: 'children' }"
+        default-expand-all
+        stripe
+        border
+        style="width: 100%"
+      >
       <el-table-column prop="name" label="部门名称" min-width="200" show-overflow-tooltip />
       <el-table-column prop="sortOrder" label="排序号" width="100" align="center" />
       <el-table-column label="操作" width="160" fixed="right">
@@ -144,6 +145,7 @@ onMounted(() => { fetchData() })
         </template>
       </el-table-column>
     </el-table>
+    </div>
 
     <el-dialog
       :model-value="dialogVisible"
@@ -183,6 +185,10 @@ onMounted(() => { fetchData() })
 <style scoped>
 .page-container {
   padding: 24px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .page-container h2 {
   margin: 0 0 20px;
@@ -195,5 +201,10 @@ onMounted(() => { fetchData() })
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+}
+.table-wrapper {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
 }
 </style>

@@ -93,6 +93,7 @@ onMounted(() => { fetchData() })
       <el-button type="danger" @click="handleCreate">+ 新建职能</el-button>
     </div>
 
+    <div class="table-wrapper">
     <el-table :data="tableData" v-loading="loading" stripe border style="width: 100%">
       <el-table-column prop="id" label="ID" width="70" />
       <el-table-column prop="code" label="职能编号" width="182" show-overflow-tooltip />
@@ -110,6 +111,7 @@ onMounted(() => { fetchData() })
         </template>
       </el-table-column>
     </el-table>
+    </div>
 
     <el-dialog
       :model-value="dialogVisible"
@@ -143,6 +145,10 @@ onMounted(() => { fetchData() })
 <style scoped>
 .page-container {
   padding: 24px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .page-container h2 {
   margin: 0 0 20px;
@@ -155,5 +161,10 @@ onMounted(() => { fetchData() })
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+}
+.table-wrapper {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
 }
 </style>
