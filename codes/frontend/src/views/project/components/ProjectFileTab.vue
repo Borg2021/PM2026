@@ -336,11 +336,6 @@ async function openVersionDialog(item: any) {
   } catch { versionList.value = [] }
 }
 
-function handleVersionDownload(version: ProjectFileVersion) {
-  if (!versionDialogItemId.value) return
-  window.open(getFileDownloadUrl(props.projectId, versionDialogItemId.value, version.versionNumber), '_blank')
-}
-
 /* ───────── 删除 ───────── */
 async function handleDelete(item: any) {
   if (!item.id) {
@@ -633,22 +628,33 @@ function getPlanFinishStatus(item: any): { text: string; cls: string } {
     </el-dialog>
 
     <!-- 版本历史对话框 -->
-    <el-dialog v-model="versionDialogVisible" :title="versionDialogTitle" width="780px">
+    <el-dialog v-model="versionDialogVisible" :title="versionDialogTitle" width="900px">
       <el-table :data="versionList" border size="small" style="width:100%">
         <el-table-column label="版本" width="70" align="center">
           <template #default="{ row }">v{{ row.versionNumber }}</template>
         </el-table-column>
-        <el-table-column label="大小" width="100" align="right">
-          <template #default="{ row }">{{ (row.fileSize / 1024).toFixed(1) }} KB</template>
-        </el-table-column>
-        <el-table-column label="上传人" width="120" prop="uploadedByName" />
-        <el-table-column label="上传时间" width="170">
+        <el-table-column label="上传人" width="100" prop="uploadedByName" />
+        <el-table-column label="上传时间" width="160">
           <template #default="{ row }">{{ formatDateTime(row.uploadedAt) }}</template>
         </el-table-column>
-        <el-table-column label="说明" min-width="150" prop="remark" show-overflow-tooltip />
-        <el-table-column label="操作" width="80" fixed="right">
+        <el-table-column label="说明" min-width="120" prop="remark" show-overflow-tooltip />
+        <el-table-column label="文件" min-width="280">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="handleVersionDownload(row)">下载</el-button>
+            <template v-if="row.files?.length">
+              <div v-for="f in row.files" :key="f.id" style="display:flex;align-items:center;justify-content:space-between;padding:2px 0">
+                <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-right:8px">
+                  {{ f.originalFileName }}
+                  <span style="color:#909399;font-size:12px;margin-left:4px">
+                    {{ f.fileSize < 1024 ? f.fileSize + 'B' : (f.fileSize / 1024).toFixed(1) + 'KB' }}
+                  </span>
+                </span>
+                <el-button size="small" type="primary" link
+                  @click="window.open(getFileDownloadUrl(props.projectId, versionDialogItemId!, undefined, f.id), '_blank')">
+                  下载
+                </el-button>
+              </div>
+            </template>
+            <span v-else style="color:#c0c4cc">-</span>
           </template>
         </el-table-column>
       </el-table>
