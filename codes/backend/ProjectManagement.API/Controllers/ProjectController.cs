@@ -778,7 +778,17 @@ public class ProjectController : ControllerBase
                 f.DeptId, f.DeptName, f.PlanFinishDate, f.LatestVersionId, f.Remark,
                 VersionCount = f.Versions.Count,
                 LatestVersion = f.LatestVersion != null
-                    ? new { f.LatestVersion.Id, f.LatestVersion.VersionNumber, f.LatestVersion.FileSize, f.LatestVersion.FileExt, f.LatestVersion.UploadedByName, f.LatestVersion.UploadedAt }
+                    ? new
+                    {
+                        f.LatestVersion.Id,
+                        f.LatestVersion.VersionNumber,
+                        f.LatestVersion.UploadedByName,
+                        f.LatestVersion.UploadedAt,
+                        Files = f.LatestVersion.Files
+                            .OrderBy(vf => vf.Id)
+                            .Select(vf => new { vf.Id, vf.OriginalFileName, vf.FileSize, vf.FileExt })
+                            .ToList()
+                    }
                     : null
             })
             .ToListAsync();
@@ -931,15 +941,19 @@ public class ProjectController : ControllerBase
         {
             ProjectFileItemId = itemId,
             VersionNumber = maxVersion + 1,
-            FilePath = $"{relativeDir}/{fileName}",
-            OriginalFileName = file.FileName,
-            FileSize = file.Length,
-            FileExt = ext,
             UploadedBy = userId,
             UploadedByName = realName,
             UploadedAt = DateTime.Now,
             Remark = remark
         };
+        var versionFile = new ProjectFileVersionFile
+        {
+            FilePath = $"{relativeDir}/{fileName}",
+            OriginalFileName = file.FileName,
+            FileSize = file.Length,
+            FileExt = ext
+        };
+        version.Files.Add(versionFile);
         _db.ProjectFileVersions.Add(version);
         await _db.SaveChangesAsync();
 
@@ -952,8 +966,8 @@ public class ProjectController : ControllerBase
         {
             versionId = version.Id,
             versionNumber = version.VersionNumber,
-            fileSize = version.FileSize,
-            fileExt = version.FileExt,
+            fileSize = versionFile.FileSize,
+            fileExt = versionFile.FileExt,
             uploadedByName = version.UploadedByName,
             uploadedAt = version.UploadedAt
         }});
@@ -985,22 +999,29 @@ public class ProjectController : ControllerBase
         if (version.HasValue)
         {
             fileVersion = await _db.ProjectFileVersions
+                .Include(v => v.Files)
                 .FirstOrDefaultAsync(v => v.ProjectFileItemId == itemId && v.VersionNumber == version.Value);
             if (fileVersion == null) return Ok(new { code = 404, message = "指定版本不存在" });
         }
         else
         {
             if (!item.LatestVersionId.HasValue) return Ok(new { code = 404, message = "文件尚未上传" });
-            fileVersion = await _db.ProjectFileVersions.FindAsync(item.LatestVersionId.Value);
+            fileVersion = await _db.ProjectFileVersions
+                .Include(v => v.Files)
+                .FirstOrDefaultAsync(v => v.Id == item.LatestVersionId.Value);
             if (fileVersion == null) return Ok(new { code = 404, message = "文件版本不存在" });
         }
 
-        var fullPath = Path.Combine(_env.ContentRootPath, fileVersion.FilePath);
+        var versionFile = fileVersion.Files.FirstOrDefault();
+        if (versionFile == null)
+            return Ok(new { code = 404, message = "文件记录不存在" });
+
+        var fullPath = Path.Combine(_env.ContentRootPath, versionFile.FilePath);
         if (!System.IO.File.Exists(fullPath))
             return Ok(new { code = 404, message = "物理文件不存在" });
 
         var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
-        var downloadName = !string.IsNullOrEmpty(fileVersion.OriginalFileName) ? fileVersion.OriginalFileName : item.FileName;
+        var downloadName = !string.IsNullOrEmpty(versionFile.OriginalFileName) ? versionFile.OriginalFileName : item.FileName;
         return File(stream, "application/octet-stream", downloadName);
     }
 
@@ -1028,8 +1049,15 @@ public class ProjectController : ControllerBase
             .OrderByDescending(v => v.VersionNumber)
             .Select(v => new
             {
-                v.Id, v.VersionNumber, v.FileSize, v.FileExt,
-                v.UploadedByName, v.UploadedAt, v.Remark
+                v.Id,
+                v.VersionNumber,
+                v.UploadedByName,
+                v.UploadedAt,
+                v.Remark,
+                Files = v.Files
+                    .OrderBy(vf => vf.Id)
+                    .Select(vf => new { vf.Id, vf.OriginalFileName, vf.FileSize, vf.FileExt })
+                    .ToList()
             })
             .ToListAsync();
 
@@ -1044,6 +1072,7 @@ public class ProjectController : ControllerBase
 
         var item = await _db.ProjectFileItems
             .Include(f => f.Versions)
+                .ThenInclude(v => v.Files)
             .FirstOrDefaultAsync(f => f.Id == itemId && f.ProjectId == id);
         if (item == null) return Ok(new { code = 404, message = "文件项不存在" });
 
@@ -1054,8 +1083,11 @@ public class ProjectController : ControllerBase
             // 必填项：删除所有版本但保留清单项
             foreach (var v in item.Versions)
             {
-                var fullPath = Path.Combine(_env.ContentRootPath, v.FilePath);
-                if (System.IO.File.Exists(fullPath)) System.IO.File.Delete(fullPath);
+                foreach (var vf in v.Files)
+                {
+                    var fullPath = Path.Combine(_env.ContentRootPath, vf.FilePath);
+                    if (System.IO.File.Exists(fullPath)) System.IO.File.Delete(fullPath);
+                }
             }
             _db.ProjectFileVersions.RemoveRange(item.Versions);
             item.LatestVersionId = null;
@@ -1065,8 +1097,11 @@ public class ProjectController : ControllerBase
             // 非必填项：删除清单项及其所有版本
             foreach (var v in item.Versions)
             {
-                var fullPath = Path.Combine(_env.ContentRootPath, v.FilePath);
-                if (System.IO.File.Exists(fullPath)) System.IO.File.Delete(fullPath);
+                foreach (var vf in v.Files)
+                {
+                    var fullPath = Path.Combine(_env.ContentRootPath, vf.FilePath);
+                    if (System.IO.File.Exists(fullPath)) System.IO.File.Delete(fullPath);
+                }
             }
             // 分两步删除，避免 LatestVersionId+Versions 级联循环引用
             item.LatestVersionId = null;
@@ -1153,7 +1188,17 @@ public class ProjectController : ControllerBase
                 f.Remark,
                 VersionCount = f.Versions.Count,
                 LatestVersion = f.LatestVersion != null
-                    ? new { f.LatestVersion.Id, f.LatestVersion.VersionNumber, f.LatestVersion.FileSize, f.LatestVersion.FileExt, f.LatestVersion.UploadedByName, f.LatestVersion.UploadedAt }
+                    ? new
+                    {
+                        f.LatestVersion.Id,
+                        f.LatestVersion.VersionNumber,
+                        f.LatestVersion.UploadedByName,
+                        f.LatestVersion.UploadedAt,
+                        Files = f.LatestVersion.Files
+                            .OrderBy(vf => vf.Id)
+                            .Select(vf => new { vf.Id, vf.OriginalFileName, vf.FileSize, vf.FileExt })
+                            .ToList()
+                    }
                     : null
             })
             .ToListAsync();
