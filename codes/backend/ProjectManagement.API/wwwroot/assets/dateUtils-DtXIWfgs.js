@@ -1,0 +1,1 @@
+function e(e,t){let[n,r,i]=e.slice(0,10).split(`-`).map(Number),a=new Date(n,r-1,i);return a.setDate(a.getDate()+t),a.toISOString().slice(0,10)}export{e as t};

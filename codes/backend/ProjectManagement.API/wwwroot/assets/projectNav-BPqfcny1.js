@@ -1,0 +1,1 @@
+import{i as e}from"./request-BcpDr-G7.js";import{r as t}from"./vue-router-BEW5VEKU.js";import{t as n}from"./index-C2u6BG3d.js";async function r(r){let i=Number(r);if(!r||!Number.isFinite(i)||i<=0)return e.warning(`无法打开项目：ID 无效`),!1;let a=`/project/view/${i}`;return t(await n.push(a).catch(e=>e))?(e.warning(`无法打开该项目，请检查权限或刷新后重试`),!1):!0}export{r as t};

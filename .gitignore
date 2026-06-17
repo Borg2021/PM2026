@@ -1,0 +1,42 @@
+# ===== .NET =====
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+**/packages/
+
+# ===== Node / Vue =====
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# ===== Database =====
+*.db
+*.db-shm
+*.db-wal
+
+# ===== Logs & Temp =====
+*.log
+*.txt
+!**/*.md
+
+# ===== Uploaded Files =====
+**/ProjectFiles/
+
+# ===== IDE =====
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ===== Secrets =====
+appsettings.*.local.json
+*.pfx
