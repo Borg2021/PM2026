@@ -248,8 +248,8 @@ if (app.Environment.IsDevelopment())
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// 动态读取 upload_filesize 系统参数，按请求设置上传大小限制（内存缓存 30 秒）
-long? _cachedLimit = null; DateTime _lastFetch = DateTime.MinValue;
+// 动态读取 upload_filesize / upload_filemaxtime 系统参数（内存缓存 30 秒）
+long? _cachedLimit = null; int _cachedTimeout = 60; DateTime _lastFetch = DateTime.MinValue;
 app.Use(async (context, next) =>
 {
     if (_lastFetch.AddSeconds(30) < DateTime.Now)
@@ -257,26 +257,51 @@ app.Use(async (context, next) =>
         try
         {
             var db = context.RequestServices.GetRequiredService<AppDbContext>();
-            var param = await db.SysParams.FirstOrDefaultAsync(p => p.ParamKey == "upload_filesize");
-            if (param != null)
+            // 读取大小限制
+            var sizeParam = await db.SysParams.FirstOrDefaultAsync(p => p.ParamKey == "upload_filesize");
+            if (sizeParam != null)
             {
-                var numeric = new string(param.ParamValue.Where(c => c >= '0' && c <= '9').ToArray());
+                var numeric = new string(sizeParam.ParamValue.Where(c => c >= '0' && c <= '9').ToArray());
                 if (long.TryParse(numeric, out var mb))
+                {
                     _cachedLimit = mb * 1024 * 1024;
                     UploadConfig.CurrentLimit = _cachedLimit.Value;
+                }
             }
+            // 读取超时限制（秒）
+            var timeoutParam = await db.SysParams.FirstOrDefaultAsync(p => p.ParamKey == "upload_filemaxtime");
+            if (timeoutParam != null && int.TryParse(timeoutParam.ParamValue.Trim(), out var sec) && sec > 0)
+                _cachedTimeout = sec;
+            else
+                _cachedTimeout = 60; // 默认 60 秒
+            UploadConfig.CurrentTimeoutSeconds = _cachedTimeout;
         }
         catch (Exception ex)
         {
             var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
-            logger.LogWarning(ex, "读取 upload_filesize 系统参数失败，延用缓存值");
+            logger.LogWarning(ex, "读取上传系统参数失败，延用缓存值");
         }
         _lastFetch = DateTime.Now;
     }
-    var feature = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
-    if (feature != null && !feature.IsReadOnly && _cachedLimit.HasValue)
-        feature.MaxRequestBodySize = _cachedLimit.Value;
+
+    // 请求体大小限制
+    var sizeFeature = context.Features.Get<IHttpMaxRequestBodySizeFeature>();
+    if (sizeFeature != null && !sizeFeature.IsReadOnly && _cachedLimit.HasValue)
+        sizeFeature.MaxRequestBodySize = _cachedLimit.Value;
+
+    // 上传类路径：设置请求超时
+    CancellationTokenSource? linkedCts = null;
+    var path = context.Request.Path.Value ?? "";
+    if (path.Contains("/upload") || (path.Contains("/files") && context.Request.Method == "POST"))
+    {
+        var ct = new CancellationTokenSource(_cachedTimeout * 1000);
+        linkedCts = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted, ct.Token);
+        context.RequestAborted = linkedCts.Token;
+    }
+
     await next();
+
+    linkedCts?.Dispose();
 });
 
 app.UseMiddleware<ProjectManagement.API.Middleware.ExceptionMiddleware>();
@@ -349,4 +374,5 @@ static void MigratePreTaskCodesToIds(AppDbContext db)
 public static class UploadConfig
 {
     public static long CurrentLimit { get; set; } = 100L * 1024 * 1024;
+    public static int CurrentTimeoutSeconds { get; set; } = 60;
 }

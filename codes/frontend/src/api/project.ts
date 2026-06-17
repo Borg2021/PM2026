@@ -6,6 +6,21 @@ import type {
   PlanReceiptItem, ReceiptItem, InvoiceItem, ProjectFileItem, ProjectFileVersion
 } from '@/types/project'
 
+/** 读取上传超时配置（秒→毫秒），默认 60 秒 */
+function getUploadTimeout(): number {
+  const cached = localStorage.getItem('upload_filemaxtime')
+  if (cached) {
+    const sec = parseInt(cached)
+    if (sec > 0) return sec * 1000
+  }
+  return 60000
+}
+
+/** 缓存上传超时配置（由系统参数接口调用后更新） */
+export function cacheUploadTimeout(seconds: string | number) {
+  localStorage.setItem('upload_filemaxtime', String(seconds))
+}
+
 export function getProjectList(params: Record<string, any>) {
   return request.get<ApiResponse<PagedResult<Project>>>('/projects', { params })
 }
@@ -205,6 +220,7 @@ export function uploadProjectFileItem(projectId: number, itemId: number, file: F
     uploadedAt: string
   }>>(`/projects/${projectId}/file-items/${itemId}/upload`, formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: getUploadTimeout(),
     onUploadProgress: (e) => { if (e.total) onProgress?.(Math.round((e.loaded / e.total) * 100)) }
   })
 }

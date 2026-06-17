@@ -26,6 +26,7 @@ dist-ssr/
 
 # ===== Uploaded Files =====
 **/ProjectFiles/
+**/Uploads/
 
 # ===== IDE =====
 .vscode/*

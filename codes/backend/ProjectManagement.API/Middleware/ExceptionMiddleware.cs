@@ -41,6 +41,8 @@ public class ExceptionMiddleware
                 {
                     UnauthorizedAccessException => "没有权限执行此操作",
                     var e when e.GetType().Name == "BadHttpRequestException" => $"上传文件大小超过系统限制（最大 {UploadConfig.CurrentLimit / 1024 / 1024} MB），请压缩后重试",
+                    OperationCanceledException => $"文件上传超时（最大 {UploadConfig.CurrentTimeoutSeconds} 秒），请检查网络或压缩文件后重试",
+                    TimeoutException => $"文件上传超时（最大 {UploadConfig.CurrentTimeoutSeconds} 秒），请检查网络或压缩文件后重试",
                     _ => ex.Message
                 }
             };

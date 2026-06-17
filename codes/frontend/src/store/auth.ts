@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { getCurrentUser } from '@/api/auth'
+import { fetchUploadConfig, getCurrentUser } from '@/api/auth'
 import { getMyPendingTaskCount, getMyPendingFileCount } from '@/api/project'
 import type { MenuItem } from '@/types/system'
 
@@ -45,7 +45,10 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function fetchPermissionsAndMenus() {
     try {
-      const res = await getCurrentUser()
+      const [res] = await Promise.all([
+        getCurrentUser(),
+        fetchUploadConfig()
+      ])
       permissions.value = res.data.permissions ?? []
       menus.value = res.data.menus ?? []
     } catch {

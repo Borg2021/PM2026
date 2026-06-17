@@ -655,7 +655,7 @@ public class ProjectController : ControllerBase
     // ────────── 文件上传 ──────────
 
     [HttpPost("~/api/v1/files/upload")]
-    public async Task<IActionResult> TempUpload(List<IFormFile> files)
+    public async Task<IActionResult> TempUpload(List<IFormFile> files, CancellationToken cancellationToken)
     {
         var uploadDir = Path.Combine(_env.ContentRootPath, "Uploads", "temp");
         Directory.CreateDirectory(uploadDir);
@@ -666,7 +666,7 @@ public class ProjectController : ControllerBase
             var fileName = $"{Guid.NewGuid():N}{Path.GetExtension(file.FileName)}";
             var filePath = Path.Combine(uploadDir, fileName);
             using var stream = new FileStream(filePath, FileMode.Create);
-            await file.CopyToAsync(stream);
+            await file.CopyToAsync(stream, cancellationToken);
 
             var pf = new ProjectFile
             {
@@ -685,7 +685,7 @@ public class ProjectController : ControllerBase
     }
 
     [HttpPost("{id:long}/files")]
-    public async Task<IActionResult> UploadFile(long id, List<IFormFile> files)
+    public async Task<IActionResult> UploadFile(long id, List<IFormFile> files, CancellationToken cancellationToken)
     {
         var denied = await ForbidIfCannotMaintainAsync(id);
         if (denied != null) return denied;
@@ -701,7 +701,7 @@ public class ProjectController : ControllerBase
             var fileName = $"{Guid.NewGuid():N}{Path.GetExtension(file.FileName)}";
             var filePath = Path.Combine(uploadDir, fileName);
             using var stream = new FileStream(filePath, FileMode.Create);
-            await file.CopyToAsync(stream);
+            await file.CopyToAsync(stream, cancellationToken);
 
             var pf = new ProjectFile
             {
@@ -895,7 +895,7 @@ public class ProjectController : ControllerBase
     }
 
     [HttpPost("{id:long}/file-items/{itemId:long}/upload")]
-    public async Task<IActionResult> UploadFileItem(long id, long itemId, IFormFile file, [FromForm] string? remark)
+    public async Task<IActionResult> UploadFileItem(long id, long itemId, IFormFile file, [FromForm] string? remark, CancellationToken cancellationToken)
     {
         var (userId, realName) = GetUserInfo();
         var project = await _db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
@@ -919,7 +919,7 @@ public class ProjectController : ControllerBase
         var filePath = Path.Combine(uploadDir, fileName);
         using (var stream = new FileStream(filePath, FileMode.Create))
         {
-            await file.CopyToAsync(stream);
+            await file.CopyToAsync(stream, cancellationToken);
         }
 
         // 查询最大版本号
