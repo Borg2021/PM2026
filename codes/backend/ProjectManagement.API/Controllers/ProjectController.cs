@@ -947,6 +947,7 @@ public class ProjectController : ControllerBase
         Directory.CreateDirectory(uploadDir);
 
         var savedFiles = new List<object>();
+        var addedFiles = new List<ProjectFileVersionFile>();
         foreach (var file in files)
         {
             var ext = Path.GetExtension(file.FileName);
@@ -966,15 +967,21 @@ public class ProjectController : ControllerBase
                 FileExt = ext
             };
             _db.ProjectFileVersionFiles.Add(versionFile);
-            savedFiles.Add(new
-            {
-                id = versionFile.Id,
-                originalFileName = versionFile.OriginalFileName,
-                fileSize = versionFile.FileSize,
-                fileExt = versionFile.FileExt
-            });
+            addedFiles.Add(versionFile);
         }
         await _db.SaveChangesAsync();
+
+        // SaveChangesAsync 后 ID 由数据库生成，再从追踪实体读取
+        foreach (var vf in addedFiles)
+        {
+            savedFiles.Add(new
+            {
+                id = vf.Id,
+                originalFileName = vf.OriginalFileName,
+                fileSize = vf.FileSize,
+                fileExt = vf.FileExt
+            });
+        }
 
         // 更新 LatestVersionId
         item.LatestVersionId = version.Id;
