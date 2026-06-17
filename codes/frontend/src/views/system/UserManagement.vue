@@ -406,6 +406,7 @@ onMounted(() => {
 
         <!-- 表格 -->
         <el-card class="table-card" shadow="never">
+          <div class="table-body">
           <el-table :data="tableData" v-loading="loading" stripe border style="width: 100%">
             <el-table-column prop="id" label="ID" width="70" />
             <el-table-column prop="username" label="用户名" width="130" show-overflow-tooltip />
@@ -461,6 +462,7 @@ onMounted(() => {
               </template>
             </el-table-column>
           </el-table>
+          </div>
 
           <div class="pagination-wrapper">
             <el-pagination
@@ -738,15 +740,27 @@ onMounted(() => {
 }
 .table-card {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   min-height: 0;
   margin-bottom: 0;
 }
+.table-card :deep(.el-card__body) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+.table-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
 .pagination-wrapper {
   display: flex;
   justify-content: flex-end;
-  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid #ebeef5;
 }
 </style>
