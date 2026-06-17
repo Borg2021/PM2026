@@ -20,7 +20,7 @@ interface MyFileItem {
   planFinishDate: string | null
   planFinishStatus: string | null
   hasUpload: boolean
-  latestVersion: { id: number; versionNumber: number; fileSize: number; fileExt: string; uploadedByName: string; uploadedAt: string } | null
+  latestVersion: { id: number; versionNumber: number; files?: { id: number; originalFileName: string; fileSize: number; fileExt?: string }[]; uploadedByName: string; uploadedAt: string } | null
   versionCount: number
   remark: string | null
 }
@@ -114,9 +114,9 @@ function formatSize(bytes: number) {
 async function handleDownload(item: MyFileItem) {
   if (!item.latestVersion) return
   // 优先用 latestVersion 中的 files
-  if ((item.latestVersion as any).files?.length) {
+  if (item.latestVersion.files?.length) {
     downloadDialogTitle.value = `文件列表 · ${item.fileName}（v${item.latestVersion.versionNumber}）`
-    downloadDialogFiles.value = (item.latestVersion as any).files
+    downloadDialogFiles.value = item.latestVersion.files
     downloadDialogProjectId.value = item.projectId
     downloadDialogItemId.value = item.id
     downloadDialogVisible.value = true
