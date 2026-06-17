@@ -252,13 +252,16 @@ async function handleUpload(item: any) {
   if (!item.id) { ElMessage.warning('请先保存文件清单后再上传'); return }
   const input = document.createElement('input')
   input.type = 'file'
+  input.multiple = true
   input.accept = '.pdf,.doc,.docx,.xls,.xlsx,.zip,.rar,.ppt,.pptx,.txt,.jpg,.png'
   input.onchange = async () => {
-    const file = input.files?.[0]
-    if (!file) return
+    const fileList = input.files
+    if (!fileList || fileList.length === 0) return
+    const files = Array.from(fileList)
+
     let remark = ''
     try {
-      const { value } = await ElMessageBox.prompt('版本说明（可选）', '上传文件', {
+      const { value } = await ElMessageBox.prompt('版本说明（可选）', `上传文件（已选择${files.length}个文件）`, {
         confirmButtonText: '上传', cancelButtonText: '取消',
         inputPlaceholder: '本次版本的变更说明...'
       })
@@ -268,8 +271,8 @@ async function handleUpload(item: any) {
     uploadingItemId.value = item.id!
     uploadProgress.value = 0
     try {
-      await uploadProjectFileItem(props.projectId, item.id!, file, remark, (pct) => { uploadProgress.value = pct })
-      ElMessage.success('上传成功')
+      await uploadProjectFileItem(props.projectId, item.id!, files, remark, (pct) => { uploadProgress.value = pct })
+      ElMessage.success(`上传成功（${files.length}个文件）`)
       await loadData()
     } catch { /* 错误由拦截器处理 */ }
     finally { uploadingItemId.value = null; uploadProgress.value = 0 }
@@ -370,6 +373,7 @@ function handleDeptChange(row: any, val: unknown) {
 /* ───────── 版本/状态显示 ───────── */
 function getVersionDisplay(item: any): string {
   if (!item.latestVersion) return '-'
+  const fileCount = item.latestVersion.files?.length ?? 1
   return `v${item.latestVersion.versionNumber}`
 }
 
