@@ -1,0 +1,1 @@
+import{Q as e,dt as t,rt as n,tt as r,w as i}from"./element-plus-vendor-B793lLrx.js";import{n as a}from"./index-Byur4vf_.js";var o={},s={class:`page-container`};function c(a,o){let c=i;return t(),r(`div`,s,[o[0]||=e(`h2`,null,`配置中心`,-1),n(c,{description:`功能开发中`})])}var l=a(o,[[`render`,c],[`__scopeId`,`data-v-295b1dc9`]]);export{l as default};
