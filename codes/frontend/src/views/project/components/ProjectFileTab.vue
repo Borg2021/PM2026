@@ -281,9 +281,34 @@ async function handleUpload(item: any) {
 }
 
 /* ───────── 下载 ───────── */
-function handleDownload(item: any) {
+async function handleDownload(item: any) {
   if (!item.id) return
-  window.open(getFileDownloadUrl(props.projectId, item.id!), '_blank')
+  // 优先用 latestVersion 中的 files（如果后端返回了）
+  if (item.latestVersion?.files?.length) {
+    downloadDialogTitle.value = `文件列表 · ${item.fileName}（v${item.latestVersion.versionNumber}）`
+    downloadDialogFiles.value = item.latestVersion.files
+    downloadDialogProjectId.value = props.projectId
+    downloadDialogItemId.value = item.id!
+    downloadDialogVisible.value = true
+    return
+  }
+  // 兜底：请求版本列表获取文件
+  try {
+    const res = await getProjectFileVersions(props.projectId, item.id!)
+    const versions = res.data ?? []
+    if (versions.length > 0 && versions[0].files?.length) {
+      downloadDialogTitle.value = `文件列表 · ${item.fileName}（v${versions[0].versionNumber}）`
+      downloadDialogFiles.value = versions[0].files
+      downloadDialogProjectId.value = props.projectId
+      downloadDialogItemId.value = item.id!
+      downloadDialogVisible.value = true
+    } else {
+      // 旧数据兼容：没有 files 数组，走直接下载
+      window.open(getFileDownloadUrl(props.projectId, item.id!), '_blank')
+    }
+  } catch {
+    window.open(getFileDownloadUrl(props.projectId, item.id!), '_blank')
+  }
 }
 
 /* ───────── 版本历史 ───────── */
@@ -291,6 +316,13 @@ const versionDialogVisible = ref(false)
 const versionDialogTitle = ref('')
 const versionList = ref<ProjectFileVersion[]>([])
 const versionDialogItemId = ref<number | null>(null)
+
+/* ───────── 下载文件列表弹窗 ───────── */
+const downloadDialogVisible = ref(false)
+const downloadDialogTitle = ref('')
+const downloadDialogFiles = ref<any[]>([])
+const downloadDialogProjectId = ref(0)
+const downloadDialogItemId = ref<number | null>(null)
 
 async function openVersionDialog(item: any) {
   if (!item.id) return
@@ -617,6 +649,24 @@ function getPlanFinishStatus(item: any): { text: string; cls: string } {
         <el-table-column label="操作" width="80" fixed="right">
           <template #default="{ row }">
             <el-button size="small" type="primary" link @click="handleVersionDownload(row)">下载</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <!-- 下载文件选择对话框 -->
+    <el-dialog v-model="downloadDialogVisible" :title="downloadDialogTitle" width="560px">
+      <el-table :data="downloadDialogFiles" border size="small" style="width:100%" empty-text="该版本没有文件">
+        <el-table-column type="index" label="序号" width="55" />
+        <el-table-column prop="originalFileName" label="文件名" min-width="250" show-overflow-tooltip />
+        <el-table-column label="文件大小" width="110" align="right">
+          <template #default="{ row }">
+            {{ row.fileSize < 1024 ? row.fileSize + ' B' : row.fileSize < 1024 * 1024 ? (row.fileSize / 1024).toFixed(1) + ' KB' : (row.fileSize / (1024 * 1024)).toFixed(1) + ' MB' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="80" fixed="right" align="center">
+          <template #default="{ row }">
+            <el-button size="small" type="primary" link @click="window.open(getFileDownloadUrl(downloadDialogProjectId, downloadDialogItemId!, undefined, row.id), '_blank')">下载</el-button>
           </template>
         </el-table-column>
       </el-table>
