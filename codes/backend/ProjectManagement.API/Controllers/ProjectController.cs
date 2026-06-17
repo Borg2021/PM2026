@@ -1000,7 +1000,7 @@ public class ProjectController : ControllerBase
 
     [HttpGet("{id:long}/file-items/{itemId:long}/download")]
     [AllowAnonymous]
-    public async Task<IActionResult> DownloadFileItem(long id, long itemId, [FromQuery] int? version)
+    public async Task<IActionResult> DownloadFileItem(long id, long itemId, [FromQuery] int? version, [FromQuery] long? fileId)
     {
         // 认证由 JwtBearer 中间件统一处理（OnMessageReceived 从 ?token= 提取）
         var (userId, _) = GetUserInfo();
@@ -1020,6 +1020,25 @@ public class ProjectController : ControllerBase
         if (!CanViewFile(item.IsPublic, item.ViewRoles, item.AssigneeId, project, userId, memberIds, canViewPublic, canViewNonPublic))
             return Forbid();
 
+        // 如果指定了 fileId，直接下载该文件
+        if (fileId.HasValue)
+        {
+            var file = await _db.ProjectFileVersionFiles
+                .Include(f => f.Version)
+                .FirstOrDefaultAsync(f => f.Id == fileId.Value);
+            if (file == null) return Ok(new { code = 404, message = "文件不存在" });
+            if (file.Version.ProjectFileItemId != itemId) return Ok(new { code = 404, message = "文件不属于该文件项" });
+
+            var fileFullPath = Path.Combine(_env.ContentRootPath, file.FilePath);
+            if (!System.IO.File.Exists(fileFullPath))
+                return Ok(new { code = 404, message = "物理文件不存在" });
+
+            var fileStream = new FileStream(fileFullPath, FileMode.Open, FileAccess.Read);
+            var downloadName = !string.IsNullOrEmpty(file.OriginalFileName) ? file.OriginalFileName : item.FileName;
+            return File(fileStream, "application/octet-stream", downloadName);
+        }
+
+        // 未指定 fileId：查找指定版本
         ProjectFileVersion? fileVersion;
         if (version.HasValue)
         {
@@ -1037,17 +1056,17 @@ public class ProjectController : ControllerBase
             if (fileVersion == null) return Ok(new { code = 404, message = "文件版本不存在" });
         }
 
-        var versionFile = fileVersion.Files.FirstOrDefault();
-        if (versionFile == null)
-            return Ok(new { code = 404, message = "文件记录不存在" });
+        // 取该版本第一个文件下载（兼容旧行为）
+        var firstFile = fileVersion.Files.OrderBy(f => f.Id).FirstOrDefault();
+        if (firstFile == null) return Ok(new { code = 404, message = "该版本没有文件" });
 
-        var fullPath = Path.Combine(_env.ContentRootPath, versionFile.FilePath);
+        var fullPath = Path.Combine(_env.ContentRootPath, firstFile.FilePath);
         if (!System.IO.File.Exists(fullPath))
             return Ok(new { code = 404, message = "物理文件不存在" });
 
         var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
-        var downloadName = !string.IsNullOrEmpty(versionFile.OriginalFileName) ? versionFile.OriginalFileName : item.FileName;
-        return File(stream, "application/octet-stream", downloadName);
+        var name = !string.IsNullOrEmpty(firstFile.OriginalFileName) ? firstFile.OriginalFileName : item.FileName;
+        return File(stream, "application/octet-stream", name);
     }
 
     [HttpGet("{id:long}/file-items/{itemId:long}/versions")]
@@ -1079,10 +1098,13 @@ public class ProjectController : ControllerBase
                 v.UploadedByName,
                 v.UploadedAt,
                 v.Remark,
-                Files = v.Files
-                    .OrderBy(vf => vf.Id)
-                    .Select(vf => new { vf.Id, vf.OriginalFileName, vf.FileSize, vf.FileExt })
-                    .ToList()
+                Files = v.Files.OrderBy(f => f.Id).Select(f => new
+                {
+                    f.Id,
+                    f.OriginalFileName,
+                    f.FileSize,
+                    f.FileExt
+                }).ToList()
             })
             .ToListAsync();
 
