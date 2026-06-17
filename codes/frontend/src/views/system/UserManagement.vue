@@ -633,6 +633,10 @@ onMounted(() => {
 <style scoped>
 .page-container {
   padding: 24px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .page-container h2 {
   margin: 0 0 20px;
@@ -645,6 +649,9 @@ onMounted(() => {
   display: flex;
   gap: 16px;
   align-items: flex-start;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
 }
 
 /* 左侧部门树 */
@@ -652,6 +659,10 @@ onMounted(() => {
   width: 312px;
   min-width: 312px;
   flex-shrink: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .dept-tree-card :deep(.el-card__header) {
   padding: 10px 16px;
@@ -668,8 +679,9 @@ onMounted(() => {
   color: #303133;
 }
 .dept-tree-wrapper {
-  overflow: auto;
-  max-height: calc(100vh - 280px);
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 .dept-tree-wrapper :deep(.el-tree-node__content) {
   height: 36px;
@@ -703,6 +715,10 @@ onMounted(() => {
 .user-content {
   flex: 1;
   min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .search-card {
   margin-bottom: 16px;
@@ -721,7 +737,12 @@ onMounted(() => {
   color: #303133;
 }
 .table-card {
-  margin-bottom: 16px;
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-bottom: 0;
 }
 .pagination-wrapper {
   display: flex;
