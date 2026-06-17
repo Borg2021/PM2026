@@ -225,10 +225,10 @@ CREATE INDEX [IX_FileTemplateItems_TemplateId] ON [FileTemplateItems] ([Template
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ProjectFileItems]') AND type = 'U')
 CREATE TABLE [ProjectFileItems] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [ProjectId] BIGINT NOT NULL, [TemplateItemId] BIGINT NULL, [IsPublic] INT NOT NULL DEFAULT 1, [ViewRoles] NVARCHAR(MAX) NULL, [SortOrder] INT NOT NULL DEFAULT 0, [FileName] NVARCHAR(200) NOT NULL DEFAULT '', [Required] INT NOT NULL DEFAULT 0, [AssigneeId] BIGINT NULL, [AssigneeName] NVARCHAR(MAX) NULL, [DeptId] BIGINT NULL, [DeptName] NVARCHAR(MAX) NULL, [PlanFinishDate] NVARCHAR(MAX) NULL, [LatestVersionId] BIGINT NULL, [Remark] NVARCHAR(MAX) NULL, CONSTRAINT [PK_ProjectFileItems] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([ProjectId]) REFERENCES [Projects]([Id]) ON DELETE CASCADE)");
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ProjectFileVersions]') AND type = 'U')
-CREATE TABLE [ProjectFileVersions] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [ProjectFileItemId] BIGINT NOT NULL, [VersionNumber] INT NOT NULL DEFAULT 1, [FilePath] NVARCHAR(500) NOT NULL DEFAULT '', [OriginalFileName] NVARCHAR(MAX) NOT NULL DEFAULT '', [FileSize] BIGINT NOT NULL DEFAULT 0, [FileExt] NVARCHAR(MAX) NULL, [UploadedBy] BIGINT NOT NULL DEFAULT 0, [UploadedByName] NVARCHAR(MAX) NOT NULL DEFAULT '', [UploadedAt] DATETIME2 NOT NULL, [Remark] NVARCHAR(MAX) NULL, CONSTRAINT [PK_ProjectFileVersions] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([ProjectFileItemId]) REFERENCES [ProjectFileItems]([Id]) ON DELETE CASCADE)");
+CREATE TABLE [ProjectFileVersions] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [ProjectFileItemId] BIGINT NOT NULL, [VersionNumber] INT NOT NULL DEFAULT 1, [UploadedBy] BIGINT NOT NULL DEFAULT 0, [UploadedByName] NVARCHAR(MAX) NOT NULL DEFAULT '', [UploadedAt] DATETIME2 NOT NULL, [Remark] NVARCHAR(MAX) NULL, CONSTRAINT [PK_ProjectFileVersions] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([ProjectFileItemId]) REFERENCES [ProjectFileItems]([Id]) ON DELETE CASCADE)");
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectFileVersions_ItemId_Version' AND object_id = OBJECT_ID(N'[dbo].[ProjectFileVersions]'))
 CREATE UNIQUE INDEX [IX_ProjectFileVersions_ItemId_Version] ON [ProjectFileVersions] ([ProjectFileItemId], [VersionNumber])");
-        AddColumnIfNotExists(db, "ProjectFileVersions", "OriginalFileName", "NVARCHAR(MAX) NOT NULL DEFAULT ''");
+
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectFileItems_ProjectId' AND object_id = OBJECT_ID(N'[dbo].[ProjectFileItems]'))
 CREATE INDEX [IX_ProjectFileItems_ProjectId] ON [ProjectFileItems] ([ProjectId])");
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectFileVersions_ProjectFileItemId' AND object_id = OBJECT_ID(N'[dbo].[ProjectFileVersions]'))
@@ -254,6 +254,16 @@ CREATE INDEX [IX_ProjectFileVersionFiles_ProjectFileVersionId] ON [ProjectFileVe
 SELECT [Id], [FilePath], [OriginalFileName], [FileSize], [FileExt] FROM [ProjectFileVersions]
 WHERE EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FilePath')
 AND NOT EXISTS (SELECT 1 FROM [ProjectFileVersionFiles] WHERE [ProjectFileVersionFiles].[ProjectFileVersionId] = [ProjectFileVersions].[Id])");
+
+            // 数据迁移完成后删除旧列，否则 EF 插入新实体时报 NOT NULL 约束错误
+            db.Database.ExecuteSqlRaw(@"IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FilePath')
+ALTER TABLE [ProjectFileVersions] DROP COLUMN [FilePath]");
+            db.Database.ExecuteSqlRaw(@"IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'OriginalFileName')
+ALTER TABLE [ProjectFileVersions] DROP COLUMN [OriginalFileName]");
+            db.Database.ExecuteSqlRaw(@"IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FileSize')
+ALTER TABLE [ProjectFileVersions] DROP COLUMN [FileSize]");
+            db.Database.ExecuteSqlRaw(@"IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FileExt')
+ALTER TABLE [ProjectFileVersions] DROP COLUMN [FileExt]");
         }
     }
 
