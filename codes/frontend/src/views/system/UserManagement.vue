@@ -69,9 +69,8 @@ const currentDeptInfo = computed(() => {
 /* ──── 部门负责人 ──── */
 const leaderDialogVisible = ref(false)
 const leaderDialogLoading = ref(false)
-const leaderSearchKeyword = ref('')
 const leaderSearchResults = ref<{ id: number; realName: string; username: string; departmentName: string | null }[]>([])
-const leaderSelectedId = ref<number | null>(null)
+const leaderSelectedIds = ref<number[]>([])
 
 /** 递归收集部门节点及其所有后代 ID */
 function collectDeptIds(node: DeptTreeNode): number[] {
@@ -167,14 +166,13 @@ const createRules = {
 function handleSetLeader() {
   if (!selectedDeptId.value) return
   const dept = currentDeptInfo.value
-  leaderSelectedId.value = dept?.leaderId ?? null
-  leaderSearchKeyword.value = ''
+  leaderSelectedIds.value = dept?.leaders?.map(l => l.userId) ?? []
   leaderSearchResults.value = []
   leaderDialogVisible.value = true
 }
 
-async function handleLeaderSearch() {
-  const kw = leaderSearchKeyword.value.trim()
+async function handleLeaderSearch(query: string) {
+  const kw = query.trim()
   if (!kw) { leaderSearchResults.value = []; return }
   leaderDialogLoading.value = true
   try {
@@ -182,14 +180,6 @@ async function handleLeaderSearch() {
     leaderSearchResults.value = res.data ?? []
   } catch { leaderSearchResults.value = [] }
   finally { leaderDialogLoading.value = false }
-}
-
-function handleLeaderSelect(user: { id: number; realName: string }) {
-  leaderSelectedId.value = user.id
-}
-
-function handleLeaderClear() {
-  leaderSelectedId.value = null
 }
 
 async function handleLeaderConfirm() {
@@ -201,9 +191,9 @@ async function handleLeaderConfirm() {
       name: dept.name,
       parentId: dept.parentId,
       sortOrder: dept.sortOrder,
-      leaderId: leaderSelectedId.value
+      leaderIds: leaderSelectedIds.value
     })
-    ElMessage.success(leaderSelectedId.value ? '负责人设置成功' : '已清除负责人')
+    ElMessage.success('负责人设置成功')
     leaderDialogVisible.value = false
     await getDepartmentList().then(res => { deptOptions.value = res.data })
   } catch { /* 错误由拦截器处理 */ }
@@ -396,10 +386,10 @@ onMounted(() => {
           <div class="toolbar-info">
             当前部门：
             <strong>{{ selectedDeptId ? deptOptions.find(d => d.id === selectedDeptId)?.name || '未知' : '全部部门' }}</strong>
-            <template v-if="currentDeptInfo?.leaderName">
+            <template v-if="currentDeptInfo?.leaders?.length">
               <span style="margin-left: 12px; color: #909399;">|</span>
               <span style="margin-left: 12px;">负责人：</span>
-              <strong>{{ currentDeptInfo!.leaderName }}</strong>
+              <el-tag v-for="l in currentDeptInfo!.leaders" :key="l.userId" type="warning" size="small" style="margin-right: 4px;">{{ l.realName }}</el-tag>
             </template>
           </div>
           <div style="display: flex; gap: 8px;">
@@ -601,52 +591,31 @@ onMounted(() => {
     <!-- 设置部门负责人对话框 -->
     <el-dialog
       v-model="leaderDialogVisible"
-      title="设置部门负责人"
+      title="设置部门负责人（多选）"
       width="500px"
       :close-on-click-modal="false"
     >
       <div style="margin-bottom: 12px; color: #606266;">
         当前部门：<strong>{{ currentDeptInfo?.name }}</strong>
-        <span v-if="currentDeptInfo?.leaderName" style="margin-left: 12px;">
-          当前负责人：<el-tag type="warning" size="small">{{ currentDeptInfo!.leaderName }}</el-tag>
-        </span>
       </div>
-
-      <el-input
-        v-model="leaderSearchKeyword"
+      <el-select
+        v-model="leaderSelectedIds"
+        multiple
+        filterable
+        remote
+        reserve-keyword
         placeholder="搜索用户（姓名 / 用户名）"
-        clearable
-        @input="handleLeaderSearch"
-        style="margin-bottom: 12px;"
-      />
-
-      <div v-if="leaderSelectedId" style="margin-bottom: 12px; padding: 8px 12px; background: #f0f9eb; border-radius: 4px; display: flex; align-items: center; justify-content: space-between;">
-        <span>
-          已选择：<strong>{{ leaderSearchResults.find(u => u.id === leaderSelectedId)?.realName || '用户 #' + leaderSelectedId }}</strong>
-        </span>
-        <el-button size="small" type="danger" plain @click="handleLeaderClear">清除</el-button>
-      </div>
-
-      <el-table
-        :data="leaderSearchResults"
-        v-loading="leaderDialogLoading"
-        border
-        size="small"
+        :remote-method="handleLeaderSearch"
+        :loading="leaderDialogLoading"
         style="width: 100%"
-        max-height="300"
-        highlight-current-row
-        @row-click="handleLeaderSelect"
       >
-        <el-table-column prop="realName" label="姓名" width="120" />
-        <el-table-column prop="username" label="用户名" width="130" />
-        <el-table-column label="所属部门" min-width="150" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.departmentName || '—' }}</template>
-        </el-table-column>
-      </el-table>
-      <div v-if="!leaderDialogLoading && leaderSearchKeyword.trim() && leaderSearchResults.length === 0" style="text-align: center; color: #909399; padding: 20px 0;">
-        未找到匹配用户
-      </div>
-
+        <el-option
+          v-for="u in leaderSearchResults"
+          :key="u.id"
+          :label="`${u.realName} (${u.username})`"
+          :value="u.id"
+        />
+      </el-select>
       <template #footer>
         <el-button @click="leaderDialogVisible = false">取消</el-button>
         <el-button type="danger" @click="handleLeaderConfirm">确定</el-button>
