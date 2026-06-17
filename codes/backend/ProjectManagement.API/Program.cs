@@ -215,6 +215,9 @@ CREATE UNIQUE INDEX [IX_UserFunctions_UserId_FunctionId] ON [UserFunctions] ([Us
         AddColumnIfNotExists(db, "Projects", "CustomerContactEmail", "NVARCHAR(MAX) NULL");
         AddColumnIfNotExists(db, "Projects", "OwnerContactPhone", "NVARCHAR(MAX) NULL");
         AddColumnIfNotExists(db, "Projects", "BusinessContactEmail", "NVARCHAR(MAX) NULL");
+        AddColumnIfNotExists(db, "Departments", "LeaderId", "BIGINT NULL");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_Departments_LeaderId' AND object_id = OBJECT_ID(N'[dbo].[Departments]'))
+CREATE INDEX [IX_Departments_LeaderId] ON [Departments] ([LeaderId])");
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[FileTemplateItems]') AND type = 'U')
 CREATE TABLE [FileTemplateItems] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [TemplateId] BIGINT NOT NULL, [SortOrder] INT NOT NULL DEFAULT 0, [FileName] NVARCHAR(200) NOT NULL DEFAULT '', [Required] INT NOT NULL DEFAULT 0, [DeptId] BIGINT NULL, [DeptName] NVARCHAR(MAX) NULL, [Remark] NVARCHAR(MAX) NULL, [IsPublic] INT NOT NULL DEFAULT 1, [ViewRoles] NVARCHAR(MAX) NULL, CONSTRAINT [PK_FileTemplateItems] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([TemplateId]) REFERENCES [Templates]([Id]) ON DELETE CASCADE)");
         AddColumnIfNotExists(db, "FileTemplateItems", "Remark", "NVARCHAR(MAX) NULL");
