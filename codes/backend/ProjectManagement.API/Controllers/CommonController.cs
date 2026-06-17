@@ -17,7 +17,7 @@ public class CommonController : ControllerBase
     [HttpGet("departments")]
     public async Task<IActionResult> GetDepartments()
     {
-        var depts = await _db.Departments.OrderBy(d => d.SortOrder).Select(d => new { d.Id, d.Name, d.ParentId, d.LeaderId, LeaderName = d.Leader != null ? d.Leader.RealName : null }).ToListAsync();
+        var depts = await _db.Departments.OrderBy(d => d.SortOrder).Select(d => new { d.Id, d.Name, d.ParentId, Leaders = d.Leaders.OrderBy(l => l.Id).Select(l => new { l.UserId, l.User.RealName }).ToList() }).ToListAsync();
         return Ok(new { code = 0, message = "success", data = depts });
     }
 

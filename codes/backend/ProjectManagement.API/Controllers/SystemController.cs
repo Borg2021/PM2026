@@ -95,7 +95,7 @@ public class SystemController : ControllerBase
     {
         var depts = await _db.Departments
             .OrderBy(d => d.SortOrder)
-            .Select(d => new { d.Id, d.Name, d.ParentId, d.SortOrder, d.LeaderId, LeaderName = d.Leader != null ? d.Leader.RealName : null })
+            .Select(d => new { d.Id, d.Name, d.ParentId, d.SortOrder, Leaders = d.Leaders.OrderBy(l => l.Id).Select(l => new { l.UserId, l.User.RealName }).ToList() })
             .ToListAsync();
         return Ok(new { code = 0, message = "success", data = depts });
     }
@@ -107,11 +107,21 @@ public class SystemController : ControllerBase
         {
             Name = request.Name.Trim(),
             ParentId = request.ParentId,
-            SortOrder = request.SortOrder,
-            LeaderId = request.LeaderId
+            SortOrder = request.SortOrder
         };
         _db.Departments.Add(dept);
         await _db.SaveChangesAsync();
+
+        if (request.LeaderIds.Count > 0)
+        {
+            foreach (var userId in request.LeaderIds)
+            {
+                _db.DepartmentLeaders.Add(new ProjectManagement.Domain.Entities.DepartmentLeader
+                { DepartmentId = dept.Id, UserId = userId });
+            }
+            await _db.SaveChangesAsync();
+        }
+
         return Ok(new { code = 0, message = "success", data = new { id = dept.Id } });
     }
 
@@ -127,7 +137,17 @@ public class SystemController : ControllerBase
         dept.Name = request.Name.Trim();
         dept.ParentId = request.ParentId;
         dept.SortOrder = request.SortOrder;
-        dept.LeaderId = request.LeaderId;
+
+        var existing = _db.DepartmentLeaders.Where(l => l.DepartmentId == id);
+        _db.DepartmentLeaders.RemoveRange(existing);
+        if (request.LeaderIds.Count > 0)
+        {
+            foreach (var userId in request.LeaderIds)
+            {
+                _db.DepartmentLeaders.Add(new ProjectManagement.Domain.Entities.DepartmentLeader
+                { DepartmentId = id, UserId = userId });
+            }
+        }
         await _db.SaveChangesAsync();
         return Ok(new { code = 0, message = "success" });
     }
@@ -581,7 +601,7 @@ public class SaveDepartmentRequest
     public string Name { get; set; } = "";
     public long? ParentId { get; set; }
     public int SortOrder { get; set; }
-    public long? LeaderId { get; set; }
+    public List<long> LeaderIds { get; set; } = new();
 }
 
 public class SaveRoleRequest
