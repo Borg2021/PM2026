@@ -167,7 +167,13 @@ function handleSetLeader() {
   if (!selectedDeptId.value) return
   const dept = currentDeptInfo.value
   leaderSelectedIds.value = dept?.leaders?.map(l => l.userId) ?? []
-  leaderSearchResults.value = []
+  // 将当前负责人预填到搜索结果中，确保 el-select 能显示姓名而非编号
+  leaderSearchResults.value = (dept?.leaders ?? []).map(l => ({
+    id: l.userId,
+    realName: l.realName,
+    username: '',
+    departmentName: null as string | null
+  }))
   leaderDialogVisible.value = true
 }
 
@@ -612,7 +618,7 @@ onMounted(() => {
         <el-option
           v-for="u in leaderSearchResults"
           :key="u.id"
-          :label="`${u.realName} (${u.username})`"
+          :label="u.username ? `${u.realName} (${u.username})` : u.realName"
           :value="u.id"
         />
       </el-select>
