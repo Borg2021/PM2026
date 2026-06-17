@@ -39,7 +39,7 @@ public class CommonController : ControllerBase
         if (functionId.HasValue)
             query = query.Where(u => u.UserFunctions.Any(uf => uf.FunctionId == functionId.Value));
         var users = await query
-            .Select(u => new { u.Id, u.RealName, u.Username, u.DepartmentId, u.Role, FunctionIds = u.UserFunctions.Select(uf => uf.FunctionId).ToList(), FunctionNames = string.Join("、", u.UserFunctions.Select(uf => uf.Function.Name)) })
+            .Select(u => new { u.Id, u.RealName, u.Username, u.DepartmentId, DepartmentName = u.Department != null ? u.Department.Name : null, u.Role, FunctionIds = u.UserFunctions.Select(uf => uf.FunctionId).ToList(), FunctionNames = string.Join("、", u.UserFunctions.Select(uf => uf.Function.Name)) })
             .OrderBy(u => u.Id)
             .Take(string.IsNullOrEmpty(keyword) ? 500 : 50)
             .ToListAsync();
