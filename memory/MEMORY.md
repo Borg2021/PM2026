@@ -14,3 +14,4 @@ metadata:
 - [前端约定](frontend-conventions.md) — 组件组织、状态管理、路由守卫
 - [代码风格](coding-style.md) — kebab-case、中文交流、最小变更原则
 - [模板系统](project-template-system.md) — 4 种模板类型 + PlanBundle 装配
+- [Git 确认](git-confirmation.md) — commit 和 push 前必须征得用户同意
