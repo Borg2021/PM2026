@@ -95,7 +95,7 @@ public class SystemController : ControllerBase
     {
         var depts = await _db.Departments
             .OrderBy(d => d.SortOrder)
-            .Select(d => new { d.Id, d.Name, d.ParentId, d.SortOrder })
+            .Select(d => new { d.Id, d.Name, d.ParentId, d.SortOrder, d.LeaderId, LeaderName = d.Leader != null ? d.Leader.RealName : null })
             .ToListAsync();
         return Ok(new { code = 0, message = "success", data = depts });
     }
@@ -107,7 +107,8 @@ public class SystemController : ControllerBase
         {
             Name = request.Name.Trim(),
             ParentId = request.ParentId,
-            SortOrder = request.SortOrder
+            SortOrder = request.SortOrder,
+            LeaderId = request.LeaderId
         };
         _db.Departments.Add(dept);
         await _db.SaveChangesAsync();
@@ -126,6 +127,7 @@ public class SystemController : ControllerBase
         dept.Name = request.Name.Trim();
         dept.ParentId = request.ParentId;
         dept.SortOrder = request.SortOrder;
+        dept.LeaderId = request.LeaderId;
         await _db.SaveChangesAsync();
         return Ok(new { code = 0, message = "success" });
     }
@@ -579,6 +581,7 @@ public class SaveDepartmentRequest
     public string Name { get; set; } = "";
     public long? ParentId { get; set; }
     public int SortOrder { get; set; }
+    public long? LeaderId { get; set; }
 }
 
 public class SaveRoleRequest
