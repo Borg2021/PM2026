@@ -17,8 +17,7 @@ export interface DepartmentItem {
   name: string
   parentId: number | null
   sortOrder: number
-  leaderId: number | null
-  leaderName: string | null
+  leaders: { userId: number; realName: string }[]
 }
 
 export interface DepartmentTreeNode extends DepartmentItem {

@@ -35,11 +35,11 @@ export function getDepartmentList() {
   return request.get<ApiResponse<DepartmentItem[]>>('/system/departments')
 }
 
-export function createDepartment(data: { name: string; parentId?: number | null; sortOrder: number; leaderId?: number | null }) {
+export function createDepartment(data: { name: string; parentId?: number | null; sortOrder: number; leaderIds?: number[] }) {
   return request.post<ApiResponse<{ id: number }>>('/system/departments', data)
 }
 
-export function updateDepartment(id: number, data: { name: string; parentId?: number | null; sortOrder: number; leaderId?: number | null }) {
+export function updateDepartment(id: number, data: { name: string; parentId?: number | null; sortOrder: number; leaderIds?: number[] }) {
   return request.put<ApiResponse<null>>(`/system/departments/${id}`, data)
 }
 
