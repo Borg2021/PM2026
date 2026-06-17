@@ -324,6 +324,14 @@ const downloadDialogFiles = ref<any[]>([])
 const downloadDialogProjectId = ref(0)
 const downloadDialogItemId = ref<number | null>(null)
 
+function handleDownloadFile(file: any) {
+  window.open(getFileDownloadUrl(downloadDialogProjectId.value, downloadDialogItemId.value!, undefined, file.id), '_blank')
+}
+
+function handleVersionFileDownload(file: any) {
+  window.open(getFileDownloadUrl(props.projectId, versionDialogItemId.value!, undefined, file.id), '_blank')
+}
+
 async function openVersionDialog(item: any) {
   if (!item.id) return
   versionDialogTitle.value = `版本历史 · ${item.fileName}`
@@ -649,7 +657,7 @@ function getPlanFinishStatus(item: any): { text: string; cls: string } {
                   </span>
                 </span>
                 <el-button size="small" type="primary" link
-                  @click="window.open(getFileDownloadUrl(props.projectId, versionDialogItemId!, undefined, f.id), '_blank')">
+                  @click="handleVersionFileDownload(f)">
                   下载
                 </el-button>
               </div>
@@ -672,7 +680,7 @@ function getPlanFinishStatus(item: any): { text: string; cls: string } {
         </el-table-column>
         <el-table-column label="操作" width="80" fixed="right" align="center">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="window.open(getFileDownloadUrl(downloadDialogProjectId, downloadDialogItemId!, undefined, row.id), '_blank')">下载</el-button>
+            <el-button size="small" type="primary" link @click="handleDownloadFile(row)">下载</el-button>
           </template>
         </el-table-column>
       </el-table>

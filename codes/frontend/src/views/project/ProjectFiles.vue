@@ -40,6 +40,10 @@ const downloadDialogTitle = ref('')
 const downloadDialogFiles = ref<any[]>([])
 const downloadDialogProjectId = ref(0)
 const downloadDialogItemId = ref<number | null>(null)
+
+function handleDownloadFile(file: any) {
+  window.open(getFileDownloadUrl(downloadDialogProjectId.value, downloadDialogItemId.value!, undefined, file.id), '_blank')
+}
 const versionList = ref<any[]>([])
 
 /* ───────── 搜索表单 ───────── */
@@ -392,7 +396,7 @@ onMounted(loadData)
         </el-table-column>
         <el-table-column label="操作" width="80" fixed="right" align="center">
           <template #default="{ row }">
-            <el-button size="small" type="primary" link @click="window.open(getFileDownloadUrl(downloadDialogProjectId, downloadDialogItemId!, undefined, row.id), '_blank')">下载</el-button>
+            <el-button size="small" type="primary" link @click="handleDownloadFile(row)">下载</el-button>
           </template>
         </el-table-column>
       </el-table>
