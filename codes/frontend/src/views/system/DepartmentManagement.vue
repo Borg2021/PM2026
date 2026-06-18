@@ -125,7 +125,6 @@ onMounted(() => { fetchData() })
       <el-button type="danger" @click="handleCreate">+ 新建部门</el-button>
     </div>
 
-    <div class="table-wrapper">
       <el-table
         :data="treeData"
         v-loading="loading"
@@ -145,7 +144,6 @@ onMounted(() => { fetchData() })
         </template>
       </el-table-column>
     </el-table>
-    </div>
 
     <el-dialog
       :model-value="dialogVisible"
@@ -202,9 +200,25 @@ onMounted(() => { fetchData() })
   align-items: center;
   margin-bottom: 16px;
 }
-.table-wrapper {
+/* 让 el-table 撑满剩余空间，表头固定 + body 滚动 */
+.page-container :deep(.el-table) {
+  display: flex;
+  flex-direction: column;
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+}
+.page-container :deep(.el-table__inner-wrapper) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.page-container :deep(.el-table__header-wrapper) {
+  flex-shrink: 0;
+}
+.page-container :deep(.el-table__body-wrapper) {
+  flex: 1;
+  overflow-y: auto;
   min-height: 0;
 }
 </style>
