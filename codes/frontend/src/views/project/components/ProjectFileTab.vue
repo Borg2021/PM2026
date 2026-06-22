@@ -440,7 +440,8 @@ function getPlanFinishStatus(item: any): { text: string; cls: string } {
     </div>
 
     <!-- 表格 -->
-    <el-table :data="items" border size="small" style="width:100%" v-loading="loading" max-height="calc(100vh - 400px)" empty-text="暂无文件资料">
+    <div class="file-table-wrap">
+      <el-table ref="fileTableRef" :data="items" border size="small" style="width:100%" height="100%" v-loading="loading" empty-text="暂无文件资料">
       <el-table-column type="index" label="序号" width="55" fixed="left" />
 
       <el-table-column label="文件名称" min-width="180" show-overflow-tooltip>
@@ -590,6 +591,7 @@ function getPlanFinishStatus(item: any): { text: string; cls: string } {
         </template>
       </el-table-column>
     </el-table>
+    </div>
 
     <!-- 底部操作栏 -->
     <div class="form-footer" v-if="!readonly">
@@ -689,8 +691,25 @@ function getPlanFinishStatus(item: any): { text: string; cls: string } {
 </template>
 
 <style scoped>
-.project-file-tab { padding: 4px 0; }
-.file-toolbar { margin-bottom: 12px; display: flex; gap: 8px; align-items: center; justify-content: flex-end; }
+.project-file-tab {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.file-toolbar {
+  margin-bottom: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+.file-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
 .status-overdue { color: #f56c6c; font-weight: 600; }
 .status-expiring { color: #e6a23c; font-weight: 600; }
 .role-checkbox-group { padding: 4px 0; }
@@ -704,5 +723,6 @@ function getPlanFinishStatus(item: any): { text: string; cls: string } {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid #e4e7ed;
+  flex-shrink: 0;
 }
 </style>

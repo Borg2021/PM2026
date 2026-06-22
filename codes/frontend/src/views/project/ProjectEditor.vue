@@ -13,7 +13,7 @@ import { getDepartments, getRoles, searchUsers, getDictByType, getTemplateList, 
 import { getSysParamByKey, getFunctionList } from '@/api/system'
 import { formatPreTaskCodes, parsePreTaskCodes, serializePreTaskCodes } from '@/utils/preTaskHelpers'
 import { buildDeptTree } from '@/utils/deptTree'
-import { taskStatusOptions, taskPriorityOptions, overdueStatus } from '@/utils/taskConstants'
+import { taskStatusOptions, taskPriorityOptions, overdueStatus, statusLabel as taskStatusLabel, priorityLabel } from '@/utils/taskConstants'
 import ProjectFileTab from './components/ProjectFileTab.vue'
 import ProjectChangeTab from './components/ProjectChangeTab.vue'
 import ProjectFinanceTab from './components/ProjectFinanceTab.vue'
@@ -696,10 +696,10 @@ function handleBack() {
 interface TaskColumnDef {
   key: string; label: string; width?: number | string; minWidth?: number | string
   align?: string; fixed?: string; showOverflowTooltip?: boolean; type?: string
-  draggable: boolean
+  draggable: boolean; className?: string
 }
 const DEFAULT_TASK_COLUMNS: TaskColumnDef[] = [
-  { key: 'index', label: '序号', type: 'index', width: 70, fixed: 'left', draggable: false },
+  { key: 'index', label: '序号', width: 70, fixed: 'left', draggable: false },
   { key: 'taskName', label: '任务名称', minWidth: 316, width: 316, fixed: 'left', draggable: false },
   { key: 'progress', label: '进度', width: 106, align: 'center', draggable: true },
   { key: 'planStartDate', label: '计划开始', width: 110, align: 'center', draggable: true },
@@ -717,7 +717,7 @@ const DEFAULT_TASK_COLUMNS: TaskColumnDef[] = [
   { key: 'actualDuration', label: '实际工期', width: 71, align: 'center', draggable: true },
   { key: 'referenceDuration', label: '参考工期', width: 80, align: 'center', draggable: true },
   { key: 'wbsCode', label: '工序号', width: 120, align: 'center', showOverflowTooltip: true, draggable: true },
-  { key: 'actions', label: '操作', width: 168, fixed: 'right', draggable: false },
+  { key: 'actions', label: '操作', width: 168, draggable: false, className: 'col-sticky-right' },
 ]
 const COLUMN_ORDER_STORAGE_KEY = computed(() => `project_task_column_order_${authStore.userId}`)
 function loadColumnOrder(): string[] {
@@ -3083,8 +3083,9 @@ onMounted(async () => {
     <!-- Tab 内容 -->
     <el-tabs v-model="activeTab" class="editor-tabs" @tab-change="onTabChange" v-loading="loading">
       <!-- ── Tab 1：基本信息 ── -->
-      <el-tab-pane label="基本信息" name="basic">
-        <el-form ref="formRef" :model="form" :rules="rules" label-width="143px" :disabled="isReadonly || form.status !== 0">
+      <el-tab-pane label="基本信息" name="basic" class="tab-pane-fill">
+        <div class="basic-tab-wrapper">
+        <el-form ref="formRef" :model="form" :rules="rules" label-width="143px" :disabled="isReadonly || form.status !== 0" style="flex:1;min-height:0;overflow-y:auto">
           <el-card shadow="never" class="form-card">
             <!-- 第1行 -->
             <el-row :gutter="24">
@@ -3364,36 +3365,32 @@ onMounted(async () => {
 
           <!-- 底部操作 -->
         </el-form>
-        <div class="form-footer">
-          <template v-if="!isReadonly">
-            <el-button type="danger" :loading="saving" @click="handleSave">保存</el-button>
-            <el-button @click="handleBack">取消</el-button>
-          </template>
-          <el-button v-else type="primary" @click="handleBack">返回</el-button>
+        <div class="form-footer" v-if="!isReadonly">
+          <el-button type="danger" :loading="saving" @click="handleSave">保存</el-button>
+        </div>
         </div>
       </el-tab-pane>
 
       <!-- ── Tab 2：成员人员 ── -->
-      <el-tab-pane label="成员列表" name="members" :disabled="!projectId">
-        <el-card shadow="never" class="form-card">
-          <template #header>
-            <div style="display:flex;justify-content:space-between;align-items:center">
-              <span style="font-weight:600">成员列表</span>
-              <div style="display:flex;gap:8px">
-                <el-button v-if="!isReadonly" type="primary" plain size="small" @click="addMember">+ 添加成员</el-button>
-                <el-button v-if="!isReadonly" type="primary" size="small" @click="openMemberTemplateDialog">从模板创建</el-button>
-              </div>
+      <el-tab-pane label="成员列表" name="members" :disabled="!projectId" class="tab-pane-fill">
+        <div class="member-tab-wrapper">
+          <div class="member-toolbar">
+            <span style="font-weight:600">成员列表</span>
+            <div style="display:flex;gap:8px">
+              <el-button v-if="!isReadonly" type="primary" plain size="small" @click="addMember">+ 添加成员</el-button>
+              <el-button v-if="!isReadonly" type="primary" size="small" @click="openMemberTemplateDialog">从模板创建</el-button>
             </div>
-          </template>
-          <el-table
-            :data="members"
-            border
-            size="small"
-            style="width:100%"
-            :row-class-name="memberRowClassName"
-            @dragover.native="onMemberTableDragOver"
-            @drop.native="onMemberTableDrop"
-          >
+          </div>
+          <div class="member-table-wrap">
+            <el-table
+              :data="members"
+              border
+              size="small"
+              style="width:100%"
+              :row-class-name="memberRowClassName"
+              @dragover.native="onMemberTableDragOver"
+              @drop.native="onMemberTableDrop"
+            >
             <!-- 拖拽手柄列 -->
             <el-table-column v-if="!isReadonly" label="" width="40" align="center">
               <template #default="{ $index }">
@@ -3464,7 +3461,12 @@ onMounted(async () => {
               </template>
             </el-table-column>
           </el-table>
-        </el-card>
+          </div>
+
+        <div class="form-footer" v-if="!isReadonly">
+          <el-button type="danger" :loading="saving" @click="handleSaveMembers">保存</el-button>
+        </div>
+        </div>
 
         <!-- 从模板导入成员对话框 -->
         <el-dialog v-model="memberTemplateDialogVisible" title="从项目成员模板导入" width="560px">
@@ -3503,18 +3505,10 @@ onMounted(async () => {
             <el-button type="primary" @click="confirmImportMemberTemplate" :disabled="!selectedMemberTemplateId">导入</el-button>
           </template>
         </el-dialog>
-
-        <div class="form-footer">
-          <template v-if="!isReadonly">
-            <el-button type="danger" :loading="saving" @click="handleSaveMembers">保存</el-button>
-            <el-button @click="handleBack">取消</el-button>
-          </template>
-          <el-button v-else type="primary" @click="handleBack">返回</el-button>
-        </div>
       </el-tab-pane>
 
       <!-- ── Tab 3：文件资料 ── -->
-      <el-tab-pane v-if="canViewFileTab" label="文件资料" name="files" :disabled="!projectId">
+      <el-tab-pane v-if="canViewFileTab" label="文件资料" name="files" :disabled="!projectId" class="tab-pane-fill">
         <ProjectFileTab
           v-if="projectId && filesTabMounted"
           :project-id="projectId"
@@ -3525,9 +3519,9 @@ onMounted(async () => {
       </el-tab-pane>
 
       <!-- ── Tab 4：项目任务计划 ── -->
-      <el-tab-pane label="任务计划" name="tasks" :disabled="!projectId">
-        <el-card shadow="never" class="form-card" :class="{ 'list-edit-active': listEditMode }">
-          <template #header>
+      <el-tab-pane label="任务计划" name="tasks" :disabled="!projectId" class="tab-pane-fill">
+        <div class="tasks-tab-wrapper">
+          <div class="tasks-toolbar" :class="{ 'list-edit-active': listEditMode }">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <span style="font-weight:600">任务计划</span>
               <div style="display:flex;gap:8px">
@@ -3540,33 +3534,34 @@ onMounted(async () => {
                 <el-button v-if="!isReadonly" type="primary" size="small" :disabled="isTaskLocked" @click="openTemplateDialog()">模板新增</el-button>
               </div>
             </div>
-          </template>
-          <el-table
-            ref="taskTableRef"
-            :data="taskTree"
-            row-key="id"
-            :tree-props="{ children: 'children' }"
-            v-loading="cascadeLoading || ctxMenuLoading"
-            element-loading-text="正在级联更新后续任务日期..."
-            border
-            size="small"
-            style="width:100%"
-            default-expand-all
-            height="calc(100vh - 350px)"
-            :header-cell-style="{ textAlign: 'center' }"
-            :header-cell-class-name="taskHeaderCellClassName"
-            v-column-drag
-            @row-click="handleTaskRowClick"
-            @row-contextmenu="handleRowContextMenu"
-            @cell-mouse-enter="onCellEnter"
-            @cell-mouse-leave="onCellLeave"
-            :row-class-name="({ row }: { row: ProjectTaskItem }) => {
-              if (ctxMenuVisible && ctxMenuTask?.id === row.id) return 'ctx-row-active'
-              if (listEditMode && editingRowId === row.id) return 'editing-row'
-              if (flashId === row.id) return 'pf'
-              return ''
-            }"
-          >
+          </div>
+          <div class="tasks-table-wrap">
+            <el-table
+              ref="taskTableRef"
+              :data="taskTree"
+              row-key="id"
+              :tree-props="{ children: 'children' }"
+              v-loading="cascadeLoading || ctxMenuLoading"
+              element-loading-text="正在级联更新后续任务日期..."
+              border
+              size="small"
+              style="width:100%"
+              height="100%"
+              default-expand-all
+              :header-cell-style="{ textAlign: 'center' }"
+              :header-cell-class-name="taskHeaderCellClassName"
+              v-column-drag
+              @row-click="handleTaskRowClick"
+              @row-contextmenu="handleRowContextMenu"
+              @cell-mouse-enter="onCellEnter"
+              @cell-mouse-leave="onCellLeave"
+              :row-class-name="({ row }: { row: ProjectTaskItem }) => {
+                if (ctxMenuVisible && ctxMenuTask?.id === row.id) return 'ctx-row-active'
+                if (listEditMode && editingRowId === row.id) return 'editing-row'
+                if (flashId === row.id) return 'pf'
+                return ''
+              }"
+            >
             <el-table-column
               v-for="col in taskColumnDefs"
               :key="col.key"
@@ -3577,6 +3572,7 @@ onMounted(async () => {
               :fixed="col.fixed"
               :type="col.type"
               :show-overflow-tooltip="col.showOverflowTooltip"
+              :class-name="col.className"
             >
               <template #default="{ row }">
                 <!-- 序号 -->
@@ -3714,7 +3710,8 @@ onMounted(async () => {
               </template>
             </el-table-column>
           </el-table>
-        </el-card>
+          </div>
+        </div>
 
         <!-- 右键上下文菜单 -->
         <Teleport to="body">
@@ -3810,7 +3807,7 @@ onMounted(async () => {
       </el-tab-pane>
 
       <!-- ── Tab 6：计划甘特图 ── -->
-      <el-tab-pane label="甘特图" name="gantt" :disabled="!projectId">
+      <el-tab-pane label="甘特图" name="gantt" :disabled="!projectId" class="tab-pane-fill">
         <div class="gantt-wrapper" v-loading="ganttLoading || cascadeLoading" :element-loading-text="cascadeLoading ? '正在级联更新后续任务日期...' : '加载中...'">
           <template v-if="tasks.length === 0 && !ganttLoading">
             <div style="text-align:center;padding:48px;color:#909399;">暂无任务数据</div>
@@ -3925,16 +3922,17 @@ onMounted(async () => {
       </el-tab-pane>
 
       <!-- ── Tab 5：任务列表（看板）── -->
-      <el-tab-pane label="任务列表" name="board" :disabled="!projectId">
-        <div style="display:flex;gap:8px;margin-bottom:12px">
-          <span style="line-height:32px;font-size:14px;font-weight:600">分组方式：</span>
-          <el-radio-group v-model="boardGroupMode" size="small">
-            <el-radio-button value="assignee">负责人</el-radio-button>
-            <el-radio-button value="dept">责任部门</el-radio-button>
-            <el-radio-button value="category">任务类别</el-radio-button>
-          </el-radio-group>
-        </div>
-        <div class="board-container">
+      <el-tab-pane label="任务列表" name="board" :disabled="!projectId" class="tab-pane-fill">
+        <div class="board-tab-wrapper">
+          <div style="display:flex;gap:8px;margin-bottom:12px">
+            <span style="line-height:32px;font-size:14px;font-weight:600">分组方式：</span>
+            <el-radio-group v-model="boardGroupMode" size="small">
+              <el-radio-button value="assignee">负责人</el-radio-button>
+              <el-radio-button value="dept">责任部门</el-radio-button>
+              <el-radio-button value="category">任务类别</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="board-container">
           <div v-for="col in boardData" :key="col.category" class="board-column">
             <div class="board-column-header">
               <span class="board-column-title">{{ getGroupLabel(col.category) }}</span>
@@ -3959,6 +3957,7 @@ onMounted(async () => {
               <div v-if="col.tasks.length === 0" class="board-empty">暂无数据</div>
             </div>
           </div>
+        </div>
         </div>
       </el-tab-pane>
 
@@ -4356,7 +4355,14 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.project-editor { padding: 20px; }
+.project-editor {
+  padding: 20px;
+  height: calc(100vh - 56px);
+  box-sizing: border-box;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
 
 .page-header {
   display: flex;
@@ -4365,6 +4371,7 @@ onMounted(async () => {
   margin-bottom: 16px;
   padding-bottom: 12px;
   border-bottom: 1px solid #e4e7ed;
+  flex-shrink: 0;
 }
 
 /* 任务进度条百分比字体调小 20% */
@@ -4393,9 +4400,68 @@ onMounted(async () => {
 
 .header-actions { display: flex; gap: 8px; }
 
-.editor-tabs :deep(.el-tabs__header) { margin-bottom: 16px; }
+.editor-tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.editor-tabs :deep(.el-tabs__header) { flex-shrink: 0; }
+.editor-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.editor-tabs :deep(.el-tab-pane) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+.editor-tabs :deep(.tab-pane-fill) {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
 
 .form-card { margin-bottom: 0; }
+
+/* ─── 任务计划 fill 模式 ─── */
+.tasks-tab-wrapper {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.tasks-toolbar {
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+.tasks-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ─── 成员列表 fill 模式 ─── */
+.member-tab-wrapper {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.member-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+.member-table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 
 /* ─── 成员拖拽手柄 ─── */
 .drag-handle {
@@ -4489,6 +4555,14 @@ onMounted(async () => {
   color: #409eff;
 }
 
+/* ─── 基本信息 fill 模式 ─── */
+.basic-tab-wrapper {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .form-footer {
   display: flex;
   justify-content: flex-end;
@@ -4496,13 +4570,23 @@ onMounted(async () => {
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid #e4e7ed;
+  flex-shrink: 0;
 }
 
+.board-tab-wrapper {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 .board-container {
+  flex: 1;
   display: flex;
   gap: 12px;
   overflow-x: auto;
+  overflow-y: auto;
   padding: 4px 0 12px;
+  min-height: 0;
 }
 
 .board-column {
@@ -4511,6 +4595,8 @@ onMounted(async () => {
   background: #f5f7fa;
   border-radius: 8px;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .board-column-header {
@@ -4519,6 +4605,7 @@ onMounted(async () => {
   align-items: center;
   padding: 10px 12px;
   background: #e6ebf5;
+  flex-shrink: 0;
 }
 
 .board-column-title {
@@ -4528,11 +4615,13 @@ onMounted(async () => {
 }
 
 .board-column-body {
+  flex: 1;
   padding: 8px;
-  min-height: 100px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
+  overflow-y: auto;
 }
 
 .task-card {
@@ -4624,6 +4713,9 @@ onMounted(async () => {
   border-radius: 4px;
   overflow: hidden;
   background: #fff;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .gantt-toolbar {
@@ -4631,14 +4723,15 @@ onMounted(async () => {
   align-items: center;
   justify-content: flex-end;
   padding: 6px 12px;
+  flex-shrink: 0;
   border-bottom: 1px solid #ebeef5;
   background: #fafafa;
 }
 
 .gantt-container {
   display: flex;
-  height: calc(100vh - 330px);
-  min-height: 400px;
+  flex: 1;
+  min-height: 0;
 }
 
 .gantt-left {
@@ -5116,4 +5209,9 @@ onMounted(async () => {
   flex-shrink: 0; font-size: 12px; color: #e74c3c; background: #fff2f0; border-radius: 4px; padding: 1px 6px; font-weight: 600;
 }
 :deep(.el-table__row.pf td) { background-color: #fce4ec; transition: background-color 0.6s; }
+
+/* 操作列 CSS sticky 右固定 —— 替代 fixed='right' 避免树表格固定层错位 */
+:deep(.col-sticky-right) { position: sticky !important; right: 0 !important; z-index: 2 !important; background: #fff !important; }
+:deep(.el-table__header-wrapper .col-sticky-right) { z-index: 3 !important; }
+:deep(.el-table__body-wrapper tr:hover .col-sticky-right) { background-color: #f5f7fa !important; }
 </style>

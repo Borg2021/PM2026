@@ -61,8 +61,8 @@ defineExpose({ loadOperationLogs })
 </script>
 
 <template>
-  <el-tab-pane label="操作日志" name="oplog" :disabled="!projectId">
-    <el-card shadow="never" class="form-card" v-loading="opLogLoading">
+  <el-tab-pane label="操作日志" name="oplog" :disabled="!projectId" class="tab-pane-fill">
+    <el-card shadow="never" class="form-card oplog-card" v-loading="opLogLoading">
       <template #header><span style="font-weight:600">操作日志</span></template>
       <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:16px">
         <el-date-picker v-model="opLogDateRange" type="daterange" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" value-format="YYYY-MM-DD" style="width:220px;flex:none" />
@@ -74,7 +74,8 @@ defineExpose({ loadOperationLogs })
         <el-button @click="handleOpLogReset">重置</el-button>
       </div>
       <div v-if="operationLogs.length === 0 && !opLogLoading" style="text-align:center;padding:48px;color:#909399;">暂无操作记录</div>
-      <el-timeline v-else>
+      <div v-else class="oplog-scroll">
+        <el-timeline>
         <el-timeline-item
           v-for="log in operationLogs"
           :key="log.id"
@@ -91,6 +92,28 @@ defineExpose({ loadOperationLogs })
           </el-card>
         </el-timeline-item>
       </el-timeline>
+      </div>
     </el-card>
   </el-tab-pane>
 </template>
+
+<style scoped>
+.oplog-card {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.oplog-card :deep(.el-card__body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.oplog-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding-right: 8px;
+  min-height: 0;
+}
+</style>
