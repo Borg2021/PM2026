@@ -3307,7 +3307,7 @@ onMounted(async () => {
             </template>
             <el-table :data="projectScopes" border size="small" style="width:100%" empty-text="暂无项目范围">
               <el-table-column type="index" label="序号" width="55" />
-              <el-table-column label="项目范围" width="180">
+              <el-table-column label="项目范围" width="324">
                 <template #default="{ row, $index }">
                   <el-input v-if="!isReadonly" v-model="row.scopeName" size="small" placeholder="请输入项目范围" />
                   <span v-else>{{ row.scopeName }}</span>
