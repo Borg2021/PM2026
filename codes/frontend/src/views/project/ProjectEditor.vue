@@ -7,7 +7,7 @@ import {
   getProjectDetail, createProject, updateProject,
   activateProject, completeProject, suspendProject, resumeProject, deactivateProject,
   saveProjectMembers,
-  getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask,
+  getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask, createTasksFromTemplate,
 } from '@/api/project'
 import { getDepartments, getRoles, searchUsers, getDictByType, getTemplateList, getTemplateDetail } from '@/api/template'
 import { getSysParamByKey, getFunctionList } from '@/api/system'
@@ -18,15 +18,6 @@ import ProjectFileTab from './components/ProjectFileTab.vue'
 import ProjectChangeTab from './components/ProjectChangeTab.vue'
 import ProjectFinanceTab from './components/ProjectFinanceTab.vue'
 import ProjectOperationLogTab from './components/ProjectOperationLogTab.vue'
-import ProductListTable from './components/ProductListTable.vue'
-import ProjectScopeTable from './components/ProjectScopeTable.vue'
-import MilestoneTable from './components/MilestoneTable.vue'
-import ProjectKanban from './components/ProjectKanban.vue'
-import PreTaskTooltip from './components/PreTaskTooltip.vue'
-import TaskTemplateDialog from './components/TaskTemplateDialog.vue'
-import TaskViewDialog from './components/TaskViewDialog.vue'
-import TaskEditDialog from './components/TaskEditDialog.vue'
-import ProjectGantt from './components/ProjectGantt.vue'
 import type {
   ProjectDetail, ProductItem, ProjectMemberItem,
   ProjectTaskItem
@@ -46,8 +37,6 @@ const mode = computed<'create' | 'edit' | 'view'>(() => {
 })
 const projectId = computed(() => route.params.id ? Number(route.params.id) : null)
 const isReadonly = computed(() => mode.value === 'view')
-/** 有效表单只读态（查看模式 或 已激活/暂停/完成的项目不允许编辑基本信息） */
-const formDisabled = computed(() => isReadonly.value || form.status !== 0)
 /** 已激活/暂停/完成的项目不允许修改任务计划（只有未激活状态可操作） */
 const isTaskLocked = computed(() => !isReadonly.value && form.status !== 0)
 const hasFieldPerm = (code: string) => authStore.hasPermission(`project:field:${code}`) || authStore.hasPermission('project:field:basic')
@@ -232,8 +221,24 @@ const rules = {
 /* ───────── 产品列表 ───────── */
 const products = ref<ProductItem[]>([])
 
+function addProduct() {
+  products.value.push({ sortOrder: products.value.length + 1, productType: '', quantity: 1, remark: '' })
+}
+
+function removeProduct(idx: number) {
+  products.value.splice(idx, 1)
+}
+
 /* ───────── 项目范围列表 ───────── */
 const projectScopes = ref<{ sortOrder: number; scopeName: string; scopeDesc: string }[]>([])
+
+function addProjectScope() {
+  projectScopes.value.push({ sortOrder: projectScopes.value.length + 1, scopeName: '', scopeDesc: '' })
+}
+
+function removeProjectScope(idx: number) {
+  projectScopes.value.splice(idx, 1)
+}
 
 /* ───────── 成员列表 ───────── */
 const members = ref<ProjectMemberItem[]>([])
@@ -812,6 +817,7 @@ const vColumnDrag = {
 }
 /* ───────── 任务计划 ───────── */
 const tasks = ref<ProjectTaskItem[]>([])
+const taskSaving = ref(false)
 const listEditMode = ref(false)
 const editingRowId = ref<number | null>(null)
 /* ───────── 前置任务悬浮提示 ───────── */
@@ -893,13 +899,15 @@ async function scrollToTaskRow(taskId: number) {
   _ft = window.setTimeout(() => { flashId.value = null }, 3000)
 }
 /* ─────────────────────────────────────── */
-const taskEditDialogVisible = ref(false)
-const taskEditDialogMode = ref<'create' | 'edit'>('create')
-const taskEditDialogTask = ref<ProjectTaskItem | null>(null)
-const taskEditDialogParentTask = ref<ProjectTaskItem | null>(null)
+const showAddTaskDialog = ref(false)
+const editingTask = ref<ProjectTaskItem>({ parentId: null, taskNo: '', wbsCode: '', taskName: '', nodeType: 1, taskCategory: '', sortOrder: 0, status: 0, priority: 3, deliverableCnt: 0, progressPct: 0, remark: '' })
 const showViewTaskDialog = ref(false)
 const viewingTask = ref<ProjectTaskItem | null>(null)
-const templateDialogRef = ref<InstanceType<typeof TaskTemplateDialog> | null>(null)
+const showTemplateDialog = ref(false)
+const templateList = ref<Template[]>([])
+const templateLoading = ref(false)
+const selectedTemplateId = ref<number | null>(null)
+const templateSearch = ref('')
 
 function openViewTask(task: ProjectTaskItem) {
   viewingTask.value = task
@@ -910,46 +918,193 @@ function taskStatusTag(s: number): '' | 'success' | 'warning' | 'info' | 'danger
   return ['info', 'primary', 'success'][s] as any ?? 'info'
 }
 
+/* ───────── 前置任务行管理 ───────── */
+interface PredRow {
+  rowKey: number
+  taskId: number
+  dependencyType: string
+  lagDays: number
+}
+let predKeySeq = 0
+const predRows = ref<PredRow[]>([])
+
+// 可用前置任务（排除自身及子孙）
+const availablePredTasks = computed(() => {
+  const currentId = editingTask.value?.id
+  if (!currentId) { const r = tasks.value.filter(t => t.id).sort((a, b) => (a.taskNo || '').localeCompare(b.taskNo || '', undefined, { numeric: true })); return r }
+  const excluded = new Set<number>()
+  function collectDescendants(parentId: number) {
+    for (const t of tasks.value) {
+      if (t.parentId === parentId && t.id) {
+        excluded.add(t.id)
+        collectDescendants(t.id)
+      }
+    }
+  }
+  if (currentId) {
+    excluded.add(currentId)
+    collectDescendants(currentId)
+  }
+  const r = tasks.value
+    .filter(t => t.id && !excluded.has(t.id))
+    .sort((a, b) => (a.taskNo || '').localeCompare(b.taskNo || '', undefined, { numeric: true }))
+  return r
+})
+
+// 可用上级节点（排除自身及子孙）
+const availableParentTree = computed(() => {
+  const currentId = editingTask.value?.id
+  if (!currentId) return taskTree.value
+  function filterTree(nodes: ProjectTaskItem[]): ProjectTaskItem[] {
+    const result: ProjectTaskItem[] = []
+    for (const node of nodes) {
+      if (node.id === currentId) continue
+      if (node.children && node.children.length > 0) {
+        result.push({ ...node, children: filterTree(node.children) })
+      } else {
+        result.push({ ...node, children: [] })
+      }
+    }
+    return result
+  }
+  return filterTree(taskTree.value)
+})
+
+// 上级节点 flat 选项（带层级缩进，排除自身及子孙）
+const flatParentOptions = computed(() => {
+  const currentId = editingTask.value?.id
+  const excluded = new Set<number>()
+  if (currentId) {
+    excluded.add(currentId)
+    function collectDescendants(pid: number) {
+      for (const t of tasks.value) {
+        if (t.parentId === pid && t.id) {
+          excluded.add(t.id)
+          collectDescendants(t.id)
+        }
+      }
+    }
+    collectDescendants(currentId)
+  }
+
+  const result: { id: number; displayLabel: string }[] = []
+  function walk(nodes: ProjectTaskItem[], depth: number) {
+    for (const n of nodes) {
+      if (n.id == null || excluded.has(n.id)) continue
+      const prefix = depth === 0 ? '' : '│  '.repeat(depth - 1) + '├─ '
+      result.push({
+        id: n.id,
+        displayLabel: `${prefix}${n.taskNo || ''} - ${n.taskName}`
+      })
+      if (n.children?.length) walk(n.children, depth + 1)
+    }
+  }
+  walk(taskTree.value, 0)
+  return result
+})
+
+function getAvailableForPredRow(rowKey: number) {
+  const selectedIds = predRows.value
+    .filter(p => p.rowKey !== rowKey && p.taskId)
+    .map(p => p.taskId)
+  return availablePredTasks.value.filter(t => t.id && !selectedIds.includes(t.id))
+}
+
+function addPredRow() {
+  predRows.value.push({
+    rowKey: Date.now() + (++predKeySeq),
+    taskId: 0,
+    dependencyType: 'FS',
+    lagDays: 0
+  })
+}
+
+function removePredRow(rowKey: number) {
+  predRows.value = predRows.value.filter(p => p.rowKey !== rowKey)
+}
+
+// parsePreTaskCodes / serializePreTaskCodes 统一使用 @/utils/preTaskHelpers
+
+
+/* 根据前置任务自动计算计划开始日期 */
+function calcPlanStartFromPreds(): string | null {
+  if (predRows.value.length === 0) return null
+  // 直接用 tasks.value 平铺列表
+  const allTasks = new Map<number, ProjectTaskItem>()
+  for (const t of tasks.value) { if (t.id) allTasks.set(t.id, t) }
+
+  let latest: string | null = null
+  for (const row of predRows.value) {
+    const pred = allTasks.get(row.taskId)
+    if (!pred) continue
+    let base: string | undefined
+    if (row.dependencyType === 'FS' || row.dependencyType === 'FF') base = pred.planFinishDate
+    else if (row.dependencyType === 'SS' || row.dependencyType === 'SF') base = pred.planStartDate
+    if (!base) continue
+    const ds = dateAddDays(base, row.lagDays)   // 时区安全
+    if (!latest || dateStrGt(ds, latest)) latest = ds
+  }
+  return latest
+}
+
+function newTaskForm(): ProjectTaskItem {
+  return { parentId: null, taskNo: '', wbsCode: '', taskName: '', nodeType: 1, taskCategory: '', sortOrder: tasks.value.length + 1, status: 0, priority: 3, deliverableCnt: 0, progressPct: 0, remark: '' }
+}
+
 function openAddTask(parent?: ProjectTaskItem) {
+  editingTask.value = newTaskForm()
+  editingTaskOldParentId.value = null
+  predRows.value = []
   if (parent) {
-    taskEditDialogParentTask.value = parent
-  } else {
-    taskEditDialogParentTask.value = null
+    editingTask.value.parentId = parent.id
+    editingTask.value.deptId = parent.deptId
+    editingTask.value.deptName = parent.deptName
+    editingTask.value.assigneeId = parent.assigneeId
+    editingTask.value.assigneeName = parent.assigneeName
   }
-  taskEditDialogMode.value = 'create'
-  taskEditDialogTask.value = null
-  taskEditDialogVisible.value = true
+  // 自动计算序号和排序
+  const siblings = tasks.value.filter(t => t.parentId === (parent?.id ?? null))
+  editingTask.value.sortOrder = siblings.length > 0
+    ? Math.max(...siblings.map(s => s.sortOrder ?? 0)) + 1
+    : 1
+  const rule = taskNoRule.value || '3,2,2'
+  const parts = rule.split(',').map(Number)
+  if (!parent) {
+    // 根节点：使用第一级位数
+    const digits = parts[0] || 3
+    const num = siblings.length + 1
+    editingTask.value.taskNo = String(num).padStart(digits, '0')
+  } else {
+    // 子节点：在父节点序号后追加下一级位数
+    const digits = parts[1] || 2
+    // 找到父节点的完整序号
+    const parentNo = parent.taskNo || ''
+    const num = siblings.length + 1
+    editingTask.value.taskNo = parentNo + '.' + String(num).padStart(digits, '0')
+  }
+  showAddTaskDialog.value = true
 }
-
 function openEditTask(row: ProjectTaskItem) {
-  taskEditDialogMode.value = 'edit'
-  taskEditDialogTask.value = row
-  taskEditDialogParentTask.value = null
-  taskEditDialogVisible.value = true
+  editingTask.value = { ...row }
+  predRows.value = parsePreTaskCodes(row.preTaskCodes).map((seg, i) => ({ ...seg, rowKey: Date.now() + (++predKeySeq) }))
+  editingTaskOldParentId.value = row.parentId ?? null
+  showAddTaskDialog.value = true
 }
 
-async function onTaskSavedFromDialog(payload: { task: ProjectTaskItem; isNew: boolean; oldParentId: number | null }) {
-  const { task: savedTask, isNew, oldParentId } = payload
+const editingTaskOldParentId = ref<number | null>(null)
 
-  // 更新本地 tasks
-  if (!isNew && savedTask.id) {
-    const idx = tasks.value.findIndex(t => t.id === savedTask.id)
-    if (idx >= 0) tasks.value[idx] = { ...savedTask }
-  } else {
-    tasks.value.push({ ...savedTask })
-  }
-
-  // 重新编号
-  const newParentId = savedTask.parentId ?? null
-  if (!isNew && oldParentId !== null) {
-    await renumberSiblings(oldParentId)
-  }
-  await renumberSiblings(newParentId)
-  await saveListEdits()
-
-  ElMessage.success('保存成功')
-  // 保持 tasks 数据最新，再次从后端同步
-  await loadTasks()
+function onParentChange(newParentId: number | null) {
+  if (!editingTask.value) return
+  const parent = newParentId != null ? tasks.value.find(t => t.id === newParentId) : null
+  const parentNo = parent?.taskNo || ''
+  const rule = taskNoRule.value || '3,2,2'
+  const parts = rule.split(',').map(Number)
+  const depth = parentNo ? parentNo.split('.').length : 0
+  const digits = parts[Math.min(depth, parts.length - 1)] ?? 2
+  const siblings = tasks.value.filter(t => t.parentId === newParentId && t.id !== editingTask.value!.id)
+  const num = siblings.length + 1
+  const padded = String(num).padStart(digits, '0')
+  editingTask.value.taskNo = parentNo ? `${parentNo}.${padded}` : padded
 }
 
 /* 判断任务是否有子节点 */
@@ -1125,6 +1280,142 @@ function syncParentPlanDates() {
       if (parent.progressPct !== avg) parent.progressPct = avg
     }
   }
+}
+
+/* 里程碑自动逻辑：当节点类型切换为里程碑时，关联字段自动同步 */
+watch(() => editingTask.value?.nodeType, (val) => {
+  if (val !== 2 || !editingTask.value) return
+  editingTask.value.planDuration = 0
+  editingTask.value.actualDuration = 0
+  editingTask.value.referenceDuration = 0
+  if (!editingTask.value.actualFinishDate) {
+    editingTask.value.progressPct = 0
+  }
+  if (editingTask.value.planFinishDate) {
+    editingTask.value.planStartDate = editingTask.value.planFinishDate
+  }
+  if (editingTask.value.actualFinishDate) {
+    editingTask.value.actualStartDate = editingTask.value.actualFinishDate
+  }
+})
+
+watch(() => editingTask.value?.planFinishDate, (val) => {
+  if (editingTask.value?.nodeType === 2 && val) {
+    editingTask.value.planStartDate = val
+  }
+})
+
+watch(() => editingTask.value?.actualFinishDate, (val) => {
+  if (editingTask.value?.nodeType === 2) {
+    editingTask.value.actualStartDate = val || undefined
+  }
+})
+
+/* 无子节点时，根据计划开始/完成自动计算计划工期 */
+watch([() => editingTask.value?.planStartDate, () => editingTask.value?.planFinishDate], () => {
+  const t = editingTask.value
+  if (!t || taskHasChildren(t.id)) return
+  if (t.planStartDate && t.planFinishDate) {
+    const days = Math.round((new Date(t.planFinishDate).getTime() - new Date(t.planStartDate).getTime()) / (1000 * 60 * 60 * 24))
+    if (days >= 0) t.planDuration = days
+  }
+})
+
+/* 无子节点时，根据实际开始/完成自动计算实际工期 */
+watch([() => editingTask.value?.actualStartDate, () => editingTask.value?.actualFinishDate], () => {
+  const t = editingTask.value
+  if (!t || taskHasChildren(t.id)) return
+  if (t.actualStartDate && t.actualFinishDate) {
+    const days = Math.round((new Date(t.actualFinishDate).getTime() - new Date(t.actualStartDate).getTime()) / (1000 * 60 * 60 * 24))
+    if (days >= 0) t.actualDuration = days
+  }
+})
+
+/* 根据实际开始/完成自动推断状态和进度 */
+watch([() => editingTask.value?.actualStartDate, () => editingTask.value?.actualFinishDate], () => {
+  const t = editingTask.value
+  if (!t) return
+  if (t.actualFinishDate) {
+    t.status = 2
+    t.progressPct = 100
+  } else if (t.actualStartDate) {
+    t.status = 1
+  } else {
+    t.status = 0
+    t.progressPct = 0
+  }
+})
+
+async function handleSaveTask() {
+  if (!projectId.value || !editingTask.value) return
+  if (!editingTask.value.taskName) { ElMessage.warning('请输入任务名称'); return }
+  if (editingTask.value.planStartDate && editingTask.value.planFinishDate && editingTask.value.planFinishDate < editingTask.value.planStartDate) {
+    ElMessage.warning('计划完成时间不能早于计划开始时间'); return
+  }
+  if (editingTask.value.actualStartDate && editingTask.value.actualFinishDate && editingTask.value.actualFinishDate < editingTask.value.actualStartDate) {
+    ElMessage.warning('实际完成时间不能早于实际开始时间'); return
+  }
+  editingTask.value.preTaskCodes = serializePreTaskCodes(predRows.value) || undefined
+  // 有前置任务时，仅当前置约束比当前计划开始更晚时才自动前推（不回拉）
+  if (predRows.value.length > 0) {
+    const calcStart = calcPlanStartFromPreds()
+    const curStart = editingTask.value.planStartDate ?? ''
+    if (calcStart && calcStart.slice(0, 10) > curStart.slice(0, 10)) {
+      editingTask.value.planStartDate = calcStart
+      if (editingTask.value.planFinishDate && editingTask.value.planDuration && editingTask.value.planDuration > 0) {
+        editingTask.value.planFinishDate = dateAddDays(calcStart, editingTask.value.planDuration)
+      }
+    }
+  }
+  taskSaving.value = true
+  try {
+    const oldParentId = editingTaskOldParentId.value
+    const newParentId = editingTask.value.parentId ?? null
+    const parentChanged = editingTask.value.id && oldParentId !== newParentId
+
+    if (editingTask.value.id) {
+      await updateProjectTask(projectId.value, editingTask.value.id, editingTask.value)
+      const idx = tasks.value.findIndex(t => t.id === editingTask.value!.id)
+      if (idx >= 0) tasks.value[idx] = { ...editingTask.value }
+    } else {
+      const res = await createProjectTask(projectId.value, editingTask.value)
+      tasks.value.push({ ...editingTask.value, id: res.data.id })
+    }
+
+    if (parentChanged) {
+      await renumberSiblings(oldParentId)
+      await renumberSiblings(newParentId)
+    }
+
+    // 步骤2：递归调整子节点的计划日期（基于前置任务约束）
+    const changedDescendantNos: number[] = editingTask.value.id
+      ? adjustDescendantsByPredecessors(editingTask.value.id)
+      : []
+    for (const childId of changedDescendantNos) {
+      const child = tasks.value.find(t => t.id === childId)
+      if (child && child.id) {
+        await updateProjectTask(projectId.value, child.id, child)
+      }
+    }
+
+    const cascadeNos = syncParentAndCollectChangedNos(
+      editingTask.value.id ? new Set([editingTask.value.id]) : new Set<number>()
+    )
+    // 将递归调整的子节点也加入级联传播队列
+    for (const id of changedDescendantNos) cascadeNos.add(id)
+    showAddTaskDialog.value = false
+
+    if (cascadeNos.size > 0) {
+      const cascadedCount = await cascadeForwardSchedule(cascadeNos)
+      if (cascadedCount > 0) {
+        ElMessage.success(`保存成功，已自动更新 ${cascadedCount} 个后续任务的计划日期`)
+      } else {
+        ElMessage.success('保存成功')
+      }
+    } else {
+      ElMessage.success('保存成功')
+    }
+  } finally { taskSaving.value = false }
 }
 
 async function handleDeleteTask(row: ProjectTaskItem) {
@@ -2026,6 +2317,11 @@ function buildTaskTree(flat: ProjectTaskItem[]): ProjectTaskItem[] {
 
 const taskTree = computed(() => buildTaskTree(tasks.value))
 
+/** 里程碑列表：从任务计划中筛选 nodeType === 2 的任务 */
+const milestoneTasks = computed(() =>
+  tasks.value.filter(t => t.nodeType === 2).sort((a, b) => (a.taskNo || '').localeCompare(b.taskNo || '', undefined, { numeric: true }))
+)
+
 /** 序号列宽根据最长 taskNo 和树深度自动适配（树缩进 16px/层 + 展开图标 18px） */
 const taskNoColWidth = computed(() => {
   let maxLen = 0
@@ -2049,27 +2345,674 @@ watch(taskNoColWidth, () => {
 })
 
 /* ───────── 模板新增 ───────── */
-function openTemplateDialog() {
-  templateDialogRef.value?.open()
+const filteredTemplates = computed(() => {
+  if (!templateSearch.value) return templateList.value
+  const kw = templateSearch.value.toLowerCase()
+  return templateList.value.filter(t =>
+    t.templateName.toLowerCase().includes(kw) ||
+    t.templateCode.toLowerCase().includes(kw)
+  )
+})
+
+async function openTemplateDialog() {
+  templateLoading.value = true
+  selectedTemplateId.value = null
+  templateSearch.value = ''
+  try {
+    const res = await getTemplateList({ pageIndex: 1, pageSize: 200, templateType: 1 })
+    templateList.value = res.data.items
+    showTemplateDialog.value = true
+  } catch { /* 拦截器统一处理 */ }
+  finally { templateLoading.value = false }
 }
 
-function onTemplateImported() {
-  loadTasks()
+async function handleCreateFromTemplate() {
+  if (!projectId.value || !selectedTemplateId.value) {
+    ElMessage.warning('请选择一个模板')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      '从模板新增将清空当前所有任务计划数据，确定继续吗？',
+      '提示',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch {
+    return // 用户取消
+  }
+  templateLoading.value = true
+  try {
+    const res = await createTasksFromTemplate(projectId.value, selectedTemplateId.value)
+    ElMessage.success(`成功创建 ${res.data.count} 条任务`)
+    showTemplateDialog.value = false
+    await loadTasks()
+  } catch { /* 拦截器统一处理 */ }
+  finally { templateLoading.value = false }
 }
+
+/* ───────── 任务列表（看板分组） ───────── */
+const boardGroupMode = ref<'category' | 'assignee' | 'dept'>('assignee')
+
+function getGroupKey(task: ProjectTaskItem): string {
+  if (boardGroupMode.value === 'assignee') return task.assigneeName || '未指定'
+  if (boardGroupMode.value === 'dept') return task.deptName || '未指定'
+  return task.taskCategory || ''
+}
+function getGroupLabel(key: string): string {
+  if (!key) return '其他'
+  if (boardGroupMode.value === 'assignee') return key
+  if (boardGroupMode.value === 'dept') return key
+  return dictMap.value['task_category']?.find(d => d.dictCode === key)?.dictLabel ?? key
+}
+
+const boardData = computed(() => {
+  const parentIds = new Set(tasks.value.filter(t => t.parentId).map(t => t.parentId))
+  const leafTasks = tasks.value.filter(t => t.id && !parentIds.has(t.id) && t.nodeType === 1)
+  const groups = [...new Set(leafTasks.map(t => getGroupKey(t)))]
+  groups.sort((a, b) => {
+    if (!a || a === '未指定') return 1
+    if (!b || b === '未指定') return -1
+    return 0
+  })
+  return groups.map(g => ({
+    category: g,
+    tasks: leafTasks.filter(t => getGroupKey(t) === g)
+  }))
+})
 
 const changeTabRef = ref<InstanceType<typeof ProjectChangeTab> | null>(null)
 const financeTabRef = ref<InstanceType<typeof ProjectFinanceTab> | null>(null)
 
-const ganttRef = ref<InstanceType<typeof ProjectGantt> | null>(null)
+/* ───────── 甘特图 ───────── */
+const ganttViewMode = ref<'day' | 'week'>('day')
+const ganttUnitWidth = computed(() => ganttViewMode.value === 'week' ? 56 : 28)
+const ganttPadUnits = computed(() => ganttViewMode.value === 'week' ? 1 : 3)
+const ganttLeftPanelWidth = ref(400)
+const ganttSeqWidth = ref(84)
+const ganttLoading = ref(false)
+const ganttRightRef = ref<HTMLElement | null>(null)
+const ganttLeftBodyRef = ref<HTMLElement | null>(null)
 
-function handleGanttNavigate(taskId: number) {
-  const task = tasks.value.find(t => t.id === taskId)
-  if (!task) return
+/* 拖拽调整列宽 */
+const ganttResizing = ref<'seq' | 'panel' | null>(null)
+function startGanttResize(e: MouseEvent, target: 'seq' | 'panel') {
+  e.preventDefault()
+  ganttResizing.value = target
+  document.body.style.cursor = 'col-resize'
+  document.body.style.userSelect = 'none'
+  document.addEventListener('mousemove', onGanttResizeMove)
+  document.addEventListener('mouseup', stopGanttResize)
+}
+function onGanttResizeMove(e: MouseEvent) {
+  if (ganttResizing.value === 'seq') {
+    ganttSeqWidth.value = Math.max(48, Math.min(160, ganttSeqWidth.value + e.movementX))
+  } else if (ganttResizing.value === 'panel') {
+    ganttLeftPanelWidth.value = Math.max(240, Math.min(600, ganttLeftPanelWidth.value + e.movementX))
+  }
+}
+function stopGanttResize() {
+  ganttResizing.value = null
+  document.body.style.cursor = ''
+  document.body.style.userSelect = ''
+  document.removeEventListener('mousemove', onGanttResizeMove)
+  document.removeEventListener('mouseup', stopGanttResize)
+}
+
+function parseDate(s?: string): Date | null {
+  if (!s) return null
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? null : d
+}
+function startOfDay(d: Date): Date { return new Date(d.getFullYear(), d.getMonth(), d.getDate()) }
+function dayDiff(a: Date, b: Date): number { return Math.round((startOfDay(a).getTime() - startOfDay(b).getTime()) / 86400000) }
+function addDays(date: Date, n: number): Date { const d = new Date(date); d.setDate(d.getDate() + n); return d }
+function formatMonth(date: Date): string { return `${date.getFullYear()}年${String(date.getMonth() + 1).padStart(2, '0')}月` }
+function isWeekend(date: Date): boolean { const day = date.getDay(); return day === 0 || day === 6 }
+function getMonday(d: Date): Date {
+  const day = d.getDay()
+  const m = new Date(d)
+  m.setDate(d.getDate() - (day === 0 ? 6 : day - 1))
+  return startOfDay(m)
+}
+function getWeekNumber(d: Date): number {
+  const target = new Date(d)
+  target.setHours(0, 0, 0, 0)
+  target.setDate(target.getDate() + 3 - (target.getDay() + 6) % 7)
+  const jan1 = new Date(target.getFullYear(), 0, 4)
+  return 1 + Math.round(((target.getTime() - jan1.getTime()) / 86400000 - 3 + (jan1.getDay() + 6) % 7) / 7)
+}
+function formatWeekLabel(d: Date): string {
+  const mon = getMonday(d)
+  const sun = addDays(mon, 6)
+  return `${mon.getMonth() + 1}/${mon.getDate()}-${sun.getMonth() + 1}/${sun.getDate()}`
+}
+function getTimelineStart(e: Date): Date {
+  if (ganttViewMode.value === 'week') return addDays(getMonday(e), -7 * ganttPadUnits.value)
+  return addDays(e, -ganttPadUnits.value)
+}
+
+const ganttEarliestDate = computed<Date | null>(() => {
+  let earliest: Date | null = null
+  for (const t of tasks.value) { const d = parseDate(t.planStartDate); if (d && (!earliest || d < earliest)) earliest = d }
+  return earliest
+})
+const ganttLatestDate = computed<Date | null>(() => {
+  let latest: Date | null = null
+  for (const t of tasks.value) {
+    // 计划结束
+    const dp = parseDate(t.planFinishDate)
+    if (dp && (!latest || dp > latest)) latest = dp
+    // 实际结束（若有）
+    const da = parseDate(t.actualFinishDate)
+    if (da && (!latest || da > latest)) latest = da
+    // 有实际开始但无实际结束：估算结束 = 实际开始 + 计划工期
+    if (t.actualStartDate && !t.actualFinishDate && t.planDuration) {
+      const aStart = parseDate(t.actualStartDate)
+      if (aStart) {
+        const est = addDays(aStart, t.planDuration)
+        if (!latest || est > latest) latest = est
+      }
+    }
+  }
+  return latest
+})
+const ganttTotalUnits = computed(() => {
+  const e = ganttEarliestDate.value; const l = ganttLatestDate.value
+  if (!e || !l) return ganttViewMode.value === 'week' ? 6 : 30
+  if (ganttViewMode.value === 'week') {
+    const start = getTimelineStart(e)
+    return Math.ceil(dayDiff(addDays(getMonday(l), 7 * (ganttPadUnits.value + 1)), start) / 7)
+  }
+  return dayDiff(l, e) + ganttPadUnits.value * 2 + 1
+})
+const ganttTimelineWidth = computed(() => Math.max(ganttTotalUnits.value * ganttUnitWidth.value, 800))
+const ganttTodayOffset = computed(() => {
+  const e = ganttEarliestDate.value; if (!e) return -1
+  const start = getTimelineStart(e)
+  if (ganttViewMode.value === 'week') {
+    const offset = Math.floor(dayDiff(startOfDay(new Date()), start) / 7)
+    return offset >= 0 ? offset * ganttUnitWidth.value : -1
+  }
+  const offset = dayDiff(startOfDay(new Date()), start)
+  return offset >= 0 ? offset * ganttUnitWidth.value : -1
+})
+
+const ganttMonthHeaders = computed(() => {
+  const e = ganttEarliestDate.value; if (!e) return []
+  const headers: { label: string; pixels: number }[] = []
+  const start = getTimelineStart(e)
+  const end = addDays(start, ganttTotalUnits.value * (ganttViewMode.value === 'week' ? 7 : 1))
+  let cursor = new Date(start.getFullYear(), start.getMonth(), 1)
+  while (cursor < end) {
+    const nextMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1)
+    const segStart = cursor > start ? cursor : start
+    const segEnd = nextMonth < end ? nextMonth : end
+    const unitCount = ganttViewMode.value === 'week'
+      ? Math.ceil(dayDiff(segEnd, segStart) / 7)
+      : Math.round(dayDiff(segEnd, segStart))
+    if (unitCount > 0) headers.push({ label: formatMonth(cursor), pixels: unitCount * ganttUnitWidth.value })
+    cursor = nextMonth
+  }
+  return headers
+})
+
+interface GanttUnitHeader { label: string; isWeekend: boolean; isToday: boolean }
+const ganttUnitHeaders = computed<GanttUnitHeader[]>(() => {
+  const e = ganttEarliestDate.value; if (!e) return []
+  const headers: GanttUnitHeader[] = []
+  const start = getTimelineStart(e)
+  const today = startOfDay(new Date())
+  if (ganttViewMode.value === 'week') {
+    for (let i = 0; i < ganttTotalUnits.value; i++) {
+      const mon = addDays(start, i * 7)
+      const sun = addDays(mon, 6)
+      const inWeek = today.getTime() >= mon.getTime() && today.getTime() <= sun.getTime()
+      headers.push({ label: formatWeekLabel(mon), isWeekend: false, isToday: inWeek })
+    }
+  } else {
+    for (let i = 0; i < ganttTotalUnits.value; i++) {
+      const d = addDays(start, i)
+      headers.push({ label: String(d.getDate()), isWeekend: isWeekend(d), isToday: d.getTime() === today.getTime() })
+    }
+  }
+  return headers
+})
+
+const ganttWeekNumHeaders = computed<string[]>(() => {
+  const e = ganttEarliestDate.value; if (!e || ganttViewMode.value !== 'week') return []
+  const start = getTimelineStart(e)
+  const nums: string[] = []
+  for (let i = 0; i < ganttTotalUnits.value; i++) {
+    nums.push(getWeekNumber(addDays(start, i * 7)) + '周')
+  }
+  return nums
+})
+
+interface GanttFlatItem {
+  task: ProjectTaskItem; level: number; index: number
+  barLeft: number; barWidth: number
+  actualBarLeft: number; actualBarWidth: number
+  displayStatus: number
+  actualDisplayStatus: number
+}
+const taskIdMap = computed(() => new Map(tasks.value.filter(t => t.id).map(t => [t.id!, t] as [number, ProjectTaskItem])))
+
+const ganttFlattenedTasks = computed<GanttFlatItem[]>(() => {
+  const result: GanttFlatItem[] = []
+  const earliest = ganttEarliestDate.value
+  const timelineStart = earliest ? getTimelineStart(earliest) : null
+  const uw = ganttUnitWidth.value
+  const isWeek = ganttViewMode.value === 'week'
+  let idx = 0
+  function calcLeft(d: Date): number {
+    return isWeek
+      ? Math.floor(dayDiff(startOfDay(d), timelineStart!) / 7) * uw
+      : dayDiff(startOfDay(d), timelineStart!) * uw
+  }
+  function calcWidth(s: Date, f: Date): number {
+    return isWeek
+      ? Math.max(uw, Math.ceil(dayDiff(startOfDay(f), startOfDay(s)) / 7) * uw)
+      : Math.max(1, dayDiff(startOfDay(f), startOfDay(s))) * uw
+  }
+  function walk(nodes: ProjectTaskItem[], level: number) {
+    for (const task of nodes) {
+      let barLeft = 0; let barWidth = 0
+      if (task.planStartDate && timelineStart) {
+        const start = parseDate(task.planStartDate)
+        const finish = parseDate(task.planFinishDate)
+        if (start) barLeft = calcLeft(start)
+        if (start && finish && task.nodeType === 1) barWidth = calcWidth(start, finish)
+      }
+      let actualBarLeft = barLeft
+      let actualBarWidth = barWidth
+      // 叶子任务才按实际日期绘制；父/汇总任务实际条始终与计划条对齐
+      const isLeaf = !(task.children && task.children.length > 0)
+      if (isLeaf && task.nodeType === 1 && timelineStart) {
+        const aStart = parseDate(task.actualStartDate)
+        const aFinish = parseDate(task.actualFinishDate)
+        if (aStart) {
+          actualBarLeft = calcLeft(aStart)
+          actualBarWidth = aFinish ? calcWidth(aStart, aFinish) : barWidth
+        }
+      }
+      // 逾期状态取自与任务计划一致的 overdueStatus 判断
+      let ds = task.status
+      if (overdueStatus(task) === '已逾期') ds = 3
+      // 实际条颜色：逾期优先；否则按实际日期推断（完成→已完成，已开始→进行中）
+      let ads = ds
+      if (overdueStatus(task) === '已逾期') {
+        ads = 3
+      } else if (task.actualFinishDate) {
+        ads = 2
+      } else if (task.actualStartDate) {
+        ads = 1
+      }
+      result.push({ task, level, index: idx++, barLeft, barWidth, actualBarLeft, actualBarWidth, displayStatus: ds, actualDisplayStatus: ads })
+      if (task.children && task.children.length > 0) walk(task.children, level + 1)
+    }
+  }
+  walk(taskTree.value, 0)
+  // 二次处理：父任务实际条宽度向上传递，覆盖子孙任务最右侧的实际结束位置
+  const itemById = new Map<number, GanttFlatItem>()
+  for (const item of result) { if (item.task.id) itemById.set(item.task.id, item) }
+  // 倒序遍历：子任务先于父任务被处理，保证多级汇总正确
+  for (let i = result.length - 1; i >= 0; i--) {
+    const item = result[i]
+    if (!item.task.parentId) continue
+    const parent = itemById.get(item.task.parentId)
+    if (!parent) continue
+    const childRight = item.actualBarLeft + item.actualBarWidth
+    const parentRight = parent.actualBarLeft + parent.actualBarWidth
+    if (childRight > parentRight) {
+      parent.actualBarWidth = childRight - parent.actualBarLeft
+    }
+  }
+  return result
+})
+
+/* ───────── 甘特图前置任务连线（MS Project FS 走线风格）───────── */
+const GANTT_ROW_H = 54
+const GANTT_PLAN_BAR_TOP = 6
+const GANTT_PLAN_BAR_H  = 17
+const GANTT_LINE_Y_OFFSET = GANTT_PLAN_BAR_TOP + Math.round(GANTT_PLAN_BAR_H / 2)
+
+/**
+ * 构建 FS（Finish→Start）依赖连线路径
+ *
+ * 规则（与 MS Project 一致）：
+ *  - 出口：前置任务右侧向右伸出 STUB 距离
+ *  - 入口：后续任务左侧从左向右接入（箭头始终朝右 →）
+ *
+ *  正向（x1+STUB+r ≤ x2）：
+ *    右出→ 竖直（在 x=x1+STUB）→ 横向到达 x2 并进入 ↩
+ *
+ *  反向（x1+STUB+r > x2，前置结束比后续开始还靠右）：
+ *    右出→ 竖直越过后续所在行→ 向左绕到 x2-STUB→ 竖直回到后续行→ 右进入 ↩
+ *    四个圆角方向全部一致（向下时全 CW=1，向上时全 CCW=0）
+ *
+ *  同行反向：向下绕行半行再折回
+ */
+function buildDepPath(x1: number, y1: number, x2: number, y2: number): string {
+  const STUB = 10  // 出入口横向短桩
+  const r = 5      // 圆角半径
+  const WRAP_EXTRA = GANTT_ROW_H * 0.55  // 绕行时超出目标行的额外距离
+
+  const sameRow = Math.abs(y2 - y1) < 1
+  const goingDown = sameRow ? true : y2 > y1
+  const ys = goingDown ? 1 : -1
+  const sw = goingDown ? 1 : 0
+  const effectiveY2 = sameRow ? y1 : y2
+
+  // ── 同行正向：简单水平线 ──
+  if (sameRow && x1 + STUB + r <= x2) {
+    return `M ${x1} ${y1} L ${x2} ${y2}`
+  }
+
+  // ── 不同行 + 后续在右侧（x2 > x1 + r）：Z 形路线（右→下→右）──
+  // 确保 x2 - r >= x1（有入口弧空间），只要后续任务在右侧就用 Z 形，避免绕圈
+  if (!sameRow && x2 > x1 + r) {
+    const sw1 = goingDown ? 1 : 0  // 右→下/上
+    const sw2 = goingDown ? 0 : 1  // 下/上→右
+    // 纵向折转 x：优先标准 STUB，但不超过 x2-r（保留入口弧空间，确保最终段向右）
+    const vx = Math.min(x1 + STUB, x2 - r)
+    // 初始水平段（vx > x1+r 才有空间）
+    const initX = Math.max(x1, vx - r)
+    const segs: string[] = [`M ${x1} ${y1}`]
+    if (initX > x1) segs.push(`L ${initX} ${y1}`)
+    segs.push(
+      `A ${r} ${r} 0 0 ${sw1} ${vx} ${y1 + ys * r}`,
+      `L ${vx} ${effectiveY2 - ys * r}`,
+      `A ${r} ${r} 0 0 ${sw2} ${vx + r} ${effectiveY2}`,
+      `L ${x2} ${effectiveY2}`,
+    )
+    return segs.join(' ')
+  }
+
+  // ── 不同行 backward（x2 <= x1+r）：S 形阶梯路线（右→下→左→下→右）──
+  // 经过两行中点，宽度紧凑（S_STUB 控制横向宽度）
+  if (!sameRow) {
+    const S_STUB = 7   // S 形两侧桩长，控制 S 的横向宽度
+    const midY   = (y1 + effectiveY2) / 2
+    const rightX = x1 + S_STUB
+    const leftX  = x2 - S_STUB
+    const sw1 = goingDown ? 1 : 0
+    const sw2 = goingDown ? 1 : 0
+    const sw3 = goingDown ? 0 : 1   // left→down/up sweep 与其余相反
+    const sw4 = goingDown ? 0 : 1
+    return [
+      `M ${x1} ${y1}`,
+      `L ${rightX - r} ${y1}`,
+      `A ${r} ${r} 0 0 ${sw1} ${rightX} ${y1 + ys * r}`,         // C1
+      `L ${rightX} ${midY - ys * r}`,
+      `A ${r} ${r} 0 0 ${sw2} ${rightX - r} ${midY}`,             // C2
+      `L ${leftX + r} ${midY}`,
+      `A ${r} ${r} 0 0 ${sw3} ${leftX} ${midY + ys * r}`,         // C3
+      `L ${leftX} ${effectiveY2 - ys * r}`,
+      `A ${r} ${r} 0 0 ${sw4} ${leftX + r} ${effectiveY2}`,       // C4
+      `L ${x2} ${effectiveY2}`,
+    ].join(' ')
+  }
+
+  // ── 同行反向：绕行到行下方 ──
+  const x1s = x1 + STUB
+  const x2s = x2 - STUB
+  const wrapY = effectiveY2 + ys * WRAP_EXTRA
+
+  // 确保绕行宽度足够，防止弧段重叠形成视觉环路
+  const minHorizGap = r * 2 + STUB
+  const leftX = (x1s - x2s) < (minHorizGap + r * 2)
+    ? x1s - minHorizGap - r * 2
+    : x2s
+
+  return [
+    `M ${x1} ${y1}`,
+    `L ${x1s - r} ${y1}`,
+    `A ${r} ${r} 0 0 ${sw} ${x1s} ${y1 + ys * r}`,        // 角1: 右→下/上
+    `L ${x1s} ${wrapY - ys * r}`,
+    `A ${r} ${r} 0 0 ${sw} ${x1s - r} ${wrapY}`,           // 角2: 下/上→左
+    `L ${leftX + r} ${wrapY}`,
+    `A ${r} ${r} 0 0 ${sw} ${leftX} ${wrapY - ys * r}`,    // 角3: 左→上/下
+    `L ${leftX} ${effectiveY2 + ys * r}`,
+    `A ${r} ${r} 0 0 ${sw} ${leftX + r} ${effectiveY2}`,   // 角4: 上/下→右
+    `L ${x2} ${effectiveY2}`,
+  ].join(' ')
+}
+
+const ganttDependencyLines = computed<{ path: string }[]>(() => {
+  const lines: { path: string }[] = []
+  const flat = ganttFlattenedTasks.value
+  if (flat.length === 0) return lines
+  const map = new Map<number, GanttFlatItem>()
+  for (const item of flat) {
+    if (item.task.id) map.set(item.task.id, item)
+  }
+  for (const item of flat) {
+    const preCodes = item.task.preTaskCodes
+    if (!preCodes) continue
+    const codes = preCodes.split(',').map(c => c.trim()).filter(Boolean)
+    for (const code of codes) {
+      const idMatch = code.match(/^(\d+)/)
+      if (!idMatch) continue
+      const pred = map.get(parseInt(idMatch[1], 10))
+      if (!pred || !item.task.planStartDate || !pred.task.planStartDate) continue
+      // FS 依赖：从前置任务右侧出发
+      const x1 = pred.barLeft + pred.barWidth
+      const x2 = item.barLeft
+      const y1 = pred.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+      const y2 = item.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+      lines.push({ path: buildDepPath(x1, y1, x2, y2) })
+    }
+  }
+  return lines
+})
+
+/* ─── 关键路径计算 ─────────────────────────────────────────────────────────
+ * 算法：前向传递（ES/EF）+ 后向传递（LS/LF）+ 总时差 = LS - ES
+ * 总时差 = 0 的任务即为关键任务，它们之间的依赖连线构成关键路径。
+ * ─────────────────────────────────────────────────────────────────────── */
+const showCriticalPath = ref(false)
+function toggleCriticalPath() {
+  showCriticalPath.value = !showCriticalPath.value
+}
+
+const criticalPathData = computed<{ taskNos: Set<number> }>(() => {
+  const empty = { taskNos: new Set<number>() }
+  if (!showCriticalPath.value) return empty
+
+  const flat = ganttFlattenedTasks.value
+  if (flat.length === 0) return empty
+
+  const earliest = ganttEarliestDate.value
+  if (!earliest) return empty
+
+  const toDay = (s?: string): number => {
+    if (!s) return 0
+    const d = parseDate(s)
+    return d ? dayDiff(startOfDay(d), startOfDay(earliest)) : 0
+  }
+
+  // 构建拓扑排序所需的结构
+  // 只对叶子任务（无子节点）运行 CPM，排除父/汇总任务带来的干扰
+  // 同时排除已完成任务，已完成不再影响工期
+  const taskMap = new Map<number, GanttFlatItem>()
+  for (const item of flat) {
+    if (item.task.id && !(item.task.children && item.task.children.length > 0) && item.task.status !== 2)
+      taskMap.set(item.task.id, item)
+  }
+
+  const succMap = new Map<number, { id: number; lagDays: number }[]>()
+  const inDeg   = new Map<number, number>()
+  for (const [id] of taskMap) { succMap.set(id, []); inDeg.set(id, 0) }
+  for (const [, item] of taskMap) {
+    if (!item.task.preTaskCodes || !item.task.id) continue
+    for (const p of parsePreTaskCodes(item.task.preTaskCodes)) {
+      if (!taskMap.has(p.taskId)) continue
+      succMap.get(p.taskId)?.push({ id: item.task.id ?? 0, lagDays: p.lagDays ?? 0 })
+      inDeg.set(item.task.id ?? 0, (inDeg.get(item.task.id ?? 0) ?? 0) + 1)
+    }
+  }
+
+  // 拓扑排序（Kahn 算法）
+  const topo: number[] = []
+  const q = [...inDeg.entries()].filter(([, d]) => d === 0).map(([n]) => n)
+  const deg2 = new Map(inDeg)
+  while (q.length) {
+    const cur = q.shift()!; topo.push(cur)
+    for (const { id: no } of succMap.get(cur) ?? []) {
+      deg2.set(no, (deg2.get(no) ?? 1) - 1)
+      if (deg2.get(no) === 0) q.push(no)
+    }
+  }
+
+  // 前向传递：ES / EF（日偏移量）
+  const es = new Map<number, number>()
+  const ef = new Map<number, number>()
+  for (const no of topo) {
+    const item = taskMap.get(no); if (!item) continue
+    // planFinishDate 是最后工作日（含），+1 转为排他性结束天，避免相邻任务产生 1 天浮动导致关键路径断裂
+    const dur = Math.max(1, toDay(item.task.planFinishDate) - toDay(item.task.planStartDate) + 1)
+    // 教科书 CPM 前向传递：
+    //   没有前置任务 → ES = 0（项目开始）
+    //   有前置任务   → ES = MAX(所有前置任务的 EF + lag)
+    // （计划日期间的空档不计入，以免产生虚假浮动）
+    const knownPreds = item.task.preTaskCodes
+      ? parsePreTaskCodes(item.task.preTaskCodes).filter(p => taskMap.has(p.taskId))
+      : []
+    let esVal = 0
+    for (const p of knownPreds) {
+      const constraint = (ef.get(p.taskId) ?? 0) + (p.lagDays ?? 0)
+      if (constraint > esVal) esVal = constraint
+    }
+    es.set(no, esVal); ef.set(no, esVal + dur)
+  }
+
+  const projectEnd = Math.max(0, ...[...ef.values()])
+
+  // 后向传递：LF / LS
+  const lf = new Map<number, number>()
+  const ls = new Map<number, number>()
+  for (const no of topo) lf.set(no, projectEnd) // 初始化全部为项目结束
+
+  for (const no of [...topo].reverse()) {
+    const item = taskMap.get(no); if (!item) continue
+    const dur = (ef.get(no) ?? 0) - (es.get(no) ?? 0)
+    const lfVal = lf.get(no) ?? projectEnd
+    ls.set(no, lfVal - dur)
+    // 反传到前置任务
+    if (item.task.preTaskCodes) {
+      for (const p of parsePreTaskCodes(item.task.preTaskCodes)) {
+        if (!taskMap.has(p.taskId)) continue
+        const constraint = (ls.get(no) ?? 0) - (p.lagDays ?? 0)
+        const oldLF = lf.get(p.taskId)
+        if (oldLF === undefined || constraint < oldLF) lf.set(p.taskId, constraint)
+      }
+    }
+  }
+
+  // 总时差 = LS - ES ≈ 0 → 关键任务
+  const taskNos = new Set<number>()
+  for (const [no, esVal] of es) {
+    const lsVal = ls.get(no) ?? 0
+    if (lsVal - esVal <= 0) taskNos.add(no)
+  }
+  // DEBUG: 输出每个任务的 CPM 计算数据
+  const debugRows: { taskNo: string; taskName: string; ES: number; EF: number; LS: number; LF: number; float: number; critical: boolean; status: number }[] = []
+  for (const [no, esVal] of es) {
+    const item = taskMap.get(no)
+    const lsVal = ls.get(no) ?? 0
+    const lfVal = lf.get(no) ?? 0
+    const efVal = ef.get(no) ?? 0
+    debugRows.push({
+      taskNo: no,
+      taskName: item?.task.taskName ?? '',
+      ES: esVal,
+      EF: efVal,
+      LS: lsVal,
+      LF: lfVal,
+      float: lsVal - esVal,
+      critical: lsVal - esVal <= 0,
+      status: item?.task.status ?? -1
+    })
+  }
+  debugRows.sort((a, b) => a.ES - b.ES || a.taskNo - b.taskNo)
+  return { taskNos }
+})
+
+const criticalPathLines = computed<{ path: string }[]>(() => {
+  if (!showCriticalPath.value) return []
+  const { taskNos } = criticalPathData.value
+  if (taskNos.size === 0) return []
+
+  const flat = ganttFlattenedTasks.value
+  const map  = new Map<number, GanttFlatItem>()
+  for (const item of flat) { if (item.task.id) map.set(item.task.id, item) }
+
+  const lines: { path: string }[] = []
+  for (const item of flat) {
+    if (!item.task.id || !item.task.preTaskCodes) continue
+    if (!taskNos.has(item.task.id)) continue
+    for (const code of item.task.preTaskCodes.split(',').map(c => c.trim()).filter(Boolean)) {
+      const idMatch = code.match(/^(\d+)/)
+      if (!idMatch) continue
+      const predId = parseInt(idMatch[1], 10)
+      if (!taskNos.has(predId)) continue
+      const pred = map.get(predId)
+      if (!pred || !item.task.planStartDate || !pred.task.planStartDate) continue
+      const x1 = pred.barLeft + pred.barWidth
+      const x2 = item.barLeft
+      const y1 = pred.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+      const y2 = item.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+      lines.push({ path: buildDepPath(x1, y1, x2, y2) })
+    }
+  }
+  return lines
+})
+
+/* 序号列宽自动适配 */
+function calcSeqAutoWidth() {
+  let maxLen = 0
+  for (const item of ganttFlattenedTasks.value) {
+    const s = item.task.taskNo || ''
+    if (s.length > maxLen) maxLen = s.length
+  }
+  return Math.max(56, maxLen * 9 + 30)
+}
+watch(ganttFlattenedTasks, () => {
+  ganttSeqWidth.value = calcSeqAutoWidth()
+}, { immediate: true })
+
+async function loadGanttData() {
+  if (!projectId.value) return
+  ganttLoading.value = true
+  try {
+    if (tasks.value.length === 0) await loadTasks()
+    await nextTick()
+    scrollGanttToToday()
+  } finally { ganttLoading.value = false }
+}
+
+function scrollGanttToToday() {
+  if (!ganttRightRef.value || ganttTodayOffset.value < 0) return
+  const container = ganttRightRef.value
+  container.scrollLeft = Math.max(0, ganttTodayOffset.value - container.clientWidth / 2)
+}
+
+function syncGanttScroll() {
+  if (!ganttRightRef.value || !ganttLeftBodyRef.value) return
+  ganttLeftBodyRef.value.scrollTop = ganttRightRef.value.scrollTop
+}
+
+function syncGanttScrollFromLeft() {
+  if (!ganttRightRef.value || !ganttLeftBodyRef.value) return
+  ganttRightRef.value.scrollTop = ganttLeftBodyRef.value.scrollTop
+}
+
+function handleGanttBarDblClick(task: ProjectTaskItem) {
   if (isReadonly.value) {
     openViewTask(task)
-  } else {
-    openEditTask(task)
+    return
   }
+  openEditTask(task)
 }
 
 const opLogTabRef = ref<InstanceType<typeof ProjectOperationLogTab> | null>(null)
@@ -2080,7 +3023,7 @@ async function onTabChange(tab: string) {
   if (tab === 'tasks' && tasks.value.length === 0) await loadTasks()
   if (tab === 'milestones' && tasks.value.length === 0) await loadTasks()
   if (tab === 'board' && tasks.value.length === 0) await loadTasks()
-  if (tab === 'gantt') await ganttRef.value?.loadGanttData()
+  if (tab === 'gantt') await loadGanttData()
   if (tab === 'changes') await changeTabRef.value?.loadChanges()
   if (tab === 'finance') await financeTabRef.value?.loadFinance()
   if (tab === 'oplog') await opLogTabRef.value?.loadOperationLogs()
@@ -2355,10 +3298,78 @@ onMounted(async () => {
           </el-card>
 
           <!-- 项目范围 -->
-          <ProjectScopeTable v-model="projectScopes" :readonly="formDisabled" />
+          <el-card shadow="never" class="form-card" style="margin-top:12px">
+            <template #header>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-weight:600">项目范围</span>
+                <el-button v-if="!isReadonly" type="danger" size="small" @click="addProjectScope">+ 添加范围</el-button>
+              </div>
+            </template>
+            <el-table :data="projectScopes" border size="small" style="width:100%" empty-text="暂无项目范围">
+              <el-table-column type="index" label="序号" width="55" />
+              <el-table-column label="项目范围" width="324">
+                <template #default="{ row, $index }">
+                  <el-input v-if="!isReadonly" v-model="row.scopeName" size="small" placeholder="请输入项目范围" />
+                  <span v-else>{{ row.scopeName }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="范围说明" min-width="240">
+                <template #default="{ row, $index }">
+                  <el-input v-if="!isReadonly" v-model="row.scopeDesc" size="small" placeholder="请输入范围说明" />
+                  <span v-else>{{ row.scopeDesc }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="!isReadonly" label="操作" width="70">
+                <template #default="{ $index }">
+                  <el-button link style="color:#f56c6c" @click="removeProjectScope($index)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
 
           <!-- 产品列表 -->
-          <ProductListTable v-model="products" :readonly="formDisabled" :dict-map="dictMap" />
+          <el-card shadow="never" class="form-card" style="margin-top:12px">
+            <template #header>
+              <div style="display:flex;justify-content:space-between;align-items:center">
+                <span style="font-weight:600">产品列表</span>
+                <el-button v-if="!isReadonly" type="danger" size="small" @click="addProduct">+ 添加产品</el-button>
+              </div>
+            </template>
+            <el-table :data="products" border size="small" style="width:100%">
+              <el-table-column type="index" label="序号" width="55" />
+              <el-table-column label="产品类型" width="150">
+                <template #default="{ row }">
+                  <el-select v-if="!isReadonly" v-model="row.productType" placeholder="请选择" size="small" clearable style="width:100%">
+                    <el-option v-for="item in (dictMap['product_type'] || [])" :key="item.dictCode" :label="item.dictLabel" :value="item.dictCode" />
+                  </el-select>
+                  <span v-else>{{ getDictLabel('product_type', row.productType) }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="数量" width="80">
+                <template #default="{ row }">
+                  <el-input-number v-if="!isReadonly" v-model="row.quantity" :min="1" size="small" style="width:100%" />
+                  <span v-else>{{ row.quantity }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="计划交付日期" width="150">
+                <template #default="{ row }">
+                  <el-date-picker v-if="!isReadonly" v-model="row.plannedDelivery" type="date" size="small" style="width:100%" value-format="YYYY-MM-DDTHH:mm:ss" />
+                  <span v-else>{{ row.plannedDelivery ? row.plannedDelivery.slice(0,10) : '' }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="备注" min-width="120">
+                <template #default="{ row }">
+                  <el-input v-if="!isReadonly" v-model="row.remark" size="small" />
+                  <span v-else>{{ row.remark }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="!isReadonly" label="操作" width="70">
+                <template #default="{ $index }">
+                  <el-button link style="color:#f56c6c" @click="removeProduct($index)">删除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-card>
 
           <!-- 底部操作 -->
         </el-form>
@@ -2743,30 +3754,219 @@ onMounted(async () => {
         </Teleport>
 
         <!-- 前置任务悬浮提示 -->
-        <PreTaskTooltip v-model:visible="pv.show" :x="pv.x" :y="pv.y" :task="pv.row" :all-tasks="tasks" @navigate="flashRow" />
+        <Teleport to="body">
+          <div
+            v-if="pv.show && pv.row"
+            class="pover"
+            :style="{ left: pv.x + 'px', top: pv.y + 'px' }"
+            @mouseenter="pvCancel()"
+            @mouseleave="pvHide()"
+          >
+            <div
+              v-for="seg in parsePreTaskCodes(pv.row.preTaskCodes)"
+              :key="seg.taskId"
+              class="pitem"
+              @click="flashRow(seg.taskId)"
+            >
+              <span class="pno">{{ taskIdMap.get(seg.taskId)?.taskNo ?? seg.taskId }}</span>
+              <span class="pnm">
+                <span>{{ taskIdMap.get(seg.taskId)?.taskName ?? '（已删除）' }}</span>
+                <span class="pprogress">{{ (taskIdMap.get(seg.taskId)?.progressPct ?? 0) + '%' }}</span>
+              </span>
+            </div>
+          </div>
+        </Teleport>
       </el-tab-pane>
 
       <!-- ── Tab 4：里程碑 ── -->
       <el-tab-pane label="里程碑" name="milestones" :disabled="!projectId">
-        <MilestoneTable :tasks="tasks" :is-readonly="isReadonly" @view="openViewTask" @edit="openEditTask" />
+        <el-card shadow="never" class="form-card">
+          <template #header><span style="font-weight:600">里程碑列表</span></template>
+          <el-table :data="milestoneTasks" border size="small" style="width:100%" max-height="calc(100vh - 350px)" empty-text="暂无里程碑数据">
+            <el-table-column type="index" label="序号" width="60" fixed="left" />
+            <el-table-column label="任务编号" width="180" prop="taskNo" />
+            <el-table-column label="里程碑名称" min-width="200" prop="taskName" show-overflow-tooltip />
+            <el-table-column label="状态" width="100" align="center">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 2 ? 'success' : row.status === 1 ? 'primary' : 'info'" size="small">
+                  {{ row.status === 2 ? '已完成' : row.status === 1 ? '进行中' : '未开始' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="计划完成" width="110" align="center">
+              <template #default="{ row }">{{ row.planFinishDate?.slice(0, 10) ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column label="实际完成" width="110" align="center">
+              <template #default="{ row }">{{ row.actualFinishDate?.slice(0, 10) ?? '-' }}</template>
+            </el-table-column>
+            <el-table-column label="进度" width="100" align="center">
+              <template #default="{ row }">
+                <el-progress :percentage="row.progressPct ?? 0" :status="row.progressPct >= 100 ? 'success' : ''" />
+              </template>
+            </el-table-column>
+            <el-table-column label="责任人" width="120" prop="assigneeName" show-overflow-tooltip />
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="openViewTask(row)">查看</el-button>
+                <el-button v-if="!isReadonly" link type="primary" size="small" @click="openEditTask(row)">编辑</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
       </el-tab-pane>
 
       <!-- ── Tab 6：计划甘特图 ── -->
       <el-tab-pane label="甘特图" name="gantt" :disabled="!projectId" class="tab-pane-fill">
-        <ProjectGantt
-          ref="ganttRef"
-          :tasks="tasks"
-          :project-id="projectId"
-          :is-readonly="isReadonly"
-          :cascade-loading="cascadeLoading"
-          @navigate="handleGanttNavigate"
-        />
+        <div class="gantt-wrapper" v-loading="ganttLoading || cascadeLoading" :element-loading-text="cascadeLoading ? '正在级联更新后续任务日期...' : '加载中...'">
+          <template v-if="tasks.length === 0 && !ganttLoading">
+            <div style="text-align:center;padding:48px;color:#909399;">暂无任务数据</div>
+          </template>
+          <template v-else>
+            <div class="gantt-toolbar">
+              <el-radio-group v-model="ganttViewMode" size="small" @change="scrollGanttToToday">
+                <el-radio-button value="day">日</el-radio-button>
+                <el-radio-button value="week">周</el-radio-button>
+              </el-radio-group>
+              <span style="font-size:12px;color:#909399;margin-left:30px">每格 {{ ganttUnitWidth }}px · 双击条图查看详情</span>
+              <el-button
+                :type="showCriticalPath ? 'primary' : 'default'"
+                size="small"
+                style="margin-left:12px"
+                @click="toggleCriticalPath"
+              >{{ showCriticalPath ? '隐藏关键路径' : '显示关键路径' }}</el-button>
+              <div class="gantt-legend" style="margin-left:auto">
+                <span class="gantt-legend-title">图例</span>
+                <span class="gantt-legend-item"><span class="gantt-legend-swatch swatch-0"></span>未开始</span>
+                <span class="gantt-legend-item"><span class="gantt-legend-swatch swatch-1"></span>进行中</span>
+                <span class="gantt-legend-item"><span class="gantt-legend-swatch swatch-2"></span>已完成</span>
+                <span class="gantt-legend-item"><span class="gantt-legend-swatch swatch-3"></span>已延误</span>
+                <span class="gantt-legend-divider"></span>
+                <span class="gantt-legend-item"><span class="gantt-legend-diamond"></span>里程碑</span>
+                <span class="gantt-legend-item"><span class="gantt-legend-today"></span>今日</span>
+                <span class="gantt-legend-divider"></span>
+                <span class="gantt-legend-item"><span style="color:#409eff">▼</span> 父节点</span>
+                <span class="gantt-legend-item"><span style="color:#909399">·</span> 叶子任务</span>
+                <span class="gantt-legend-divider"></span>
+                <span class="gantt-legend-item"><svg width="16" height="10" style="vertical-align:middle"><line x1="0" y1="5" x2="12" y2="5" stroke="#a855f7" stroke-width="1" /><polygon points="12,0 16,5 12,10" fill="#a855f7" /></svg> 前置连线</span>
+                <span class="gantt-legend-item" v-if="showCriticalPath"><svg width="16" height="10" style="vertical-align:middle"><line x1="0" y1="5" x2="12" y2="5" stroke="#000000" stroke-width="1" stroke-dasharray="3,4" /><polygon points="12,0 16,5 12,10" fill="#000000" /></svg> 关键路径</span>
+              </div>
+            </div>
+            <div class="gantt-container">
+              <!-- 左侧任务名称 -->
+              <div class="gantt-left" :style="{ width: ganttLeftPanelWidth + 'px' }">
+                <div class="gantt-left-header" :style="{ height: (ganttViewMode === 'week' ? 81 : 54) + 'px', lineHeight: (ganttViewMode === 'week' ? 81 : 54) + 'px' }">
+                  <span class="gantt-header-seq" :style="{ width: ganttSeqWidth + 'px' }">序号</span>
+                  <span class="gantt-resize-handle" @mousedown="startGanttResize($event, 'seq')"></span>
+                  <span class="gantt-header-name">任务名称</span>
+                </div>
+                <div class="gantt-left-body" ref="ganttLeftBodyRef" @scroll="syncGanttScrollFromLeft" :style="{ height: 'calc(100% - ' + (ganttViewMode === 'week' ? 81 : 54) + 'px)' }">
+                  <div v-for="item in ganttFlattenedTasks" :key="item.task.id ?? item.task.taskNo" class="gantt-row" :class="{ 'gantt-row-alt': item.index % 2 === 1 }">
+                    <span class="gantt-task-no" :style="{ width: ganttSeqWidth + 'px' }" :title="item.task.taskNo">{{ item.task.taskNo }}</span>
+                    <span class="gantt-task-name" :style="{ paddingLeft: (item.level * 20 + 8) + 'px' }" :title="item.task.taskName">
+                      <span class="gantt-task-icon" v-if="item.task.nodeType === 2" style="color:#e74c3c">◆</span>
+                      <span class="gantt-task-icon" v-else-if="item.task.children && item.task.children.length" style="color:#409eff">▼</span>
+                      <span class="gantt-task-icon" v-else style="color:#909399">·</span>
+                      {{ item.task.taskName }}
+                    </span>
+                  </div>
+                </div>
+                <span class="gantt-panel-resize" @mousedown="startGanttResize($event, 'panel')"></span>
+              </div>
+              <!-- 右侧时间轴 -->
+              <div class="gantt-right" ref="ganttRightRef" @scroll="syncGanttScroll">
+                <div class="gantt-timeline" :style="{ width: ganttTimelineWidth + 'px' }">
+                  <div class="gantt-header">
+                    <div class="gantt-header-row">
+                      <div v-for="(m, mi) in ganttMonthHeaders" :key="'m'+mi" class="gantt-month-cell" :style="{ width: m.pixels + 'px' }">{{ m.label }}</div>
+                    </div>
+                    <div v-if="ganttViewMode === 'week'" class="gantt-header-row gantt-weeknum-row">
+                      <div v-for="(wn, wni) in ganttWeekNumHeaders" :key="'wn'+wni" class="gantt-weeknum-cell" :style="{ width: ganttUnitWidth + 'px' }">{{ wn }}</div>
+                    </div>
+                    <div class="gantt-header-row">
+                      <div v-for="(u, ui) in ganttUnitHeaders" :key="'u'+ui" class="gantt-day-cell" :class="{ 'gantt-day-weekend': u.isWeekend, 'gantt-day-today': u.isToday }" :style="{ width: ganttUnitWidth + 'px' }">{{ u.label }}</div>
+                    </div>
+                  </div>
+                  <div class="gantt-body">
+                    <svg v-if="ganttDependencyLines.length || criticalPathLines.length" class="gantt-dep-svg" :style="{ width: ganttTimelineWidth + 'px', height: (ganttFlattenedTasks.length * GANTT_ROW_H) + 'px', position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 1 }">
+                      <defs>
+                        <marker id="ganttDepArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+                          <path d="M 0 0 L 8 4 L 0 8 Z" fill="#a855f7" />
+                        </marker>
+                        <marker id="ganttCriticalArrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
+                          <path d="M 0 0 L 8 4 L 0 8 Z" fill="#000000" />
+                        </marker>
+                      </defs>
+                      <path v-for="(line, i) in ganttDependencyLines" :key="'dl'+i" :d="line.path" fill="none" stroke="#a855f7" stroke-width="1" stroke-linejoin="round" marker-end="url(#ganttDepArrow)" />
+                      <path v-for="(line, i) in criticalPathLines" :key="'cp'+i" :d="line.path" fill="none" stroke="#000000" stroke-width="2.5" stroke-linejoin="round" stroke-dasharray="5,8" class="gantt-critical-path" marker-end="url(#ganttCriticalArrow)" />
+                    </svg>
+                    <div class="gantt-today-line" v-if="ganttTodayOffset >= 0" :style="{ left: ganttTodayOffset + 'px' }">
+                      <div class="gantt-today-label">今日</div>
+                    </div>
+                    <div v-for="item in ganttFlattenedTasks" :key="item.task.id ?? item.task.taskNo" class="gantt-row" :class="{ 'gantt-row-alt': item.index % 2 === 1 }">
+                      <div v-if="item.task.nodeType === 2 && item.task.planStartDate" class="gantt-milestone" :style="{ left: item.barLeft + 'px' }" :title="item.task.taskName + ': ' + (item.task.planStartDate?.slice(0,10) ?? '')"></div>
+                      <div v-else-if="item.task.nodeType === 1 && item.task.planStartDate && item.barWidth > 0"
+                           class="gantt-bar gantt-bar-plan" :class="'gantt-bar-status-' + item.displayStatus"
+                           :style="{ left: item.barLeft + 'px', width: item.barWidth + 'px' }"
+                           :title="'【计划】' + item.task.taskName + ' (' + (item.task.planStartDate?.slice(0,10) ?? '') + ' ~ ' + (item.task.planFinishDate?.slice(0,10) ?? '') + ')'"
+                           @dblclick="handleGanttBarDblClick(item.task)">
+                      </div>
+                      <div v-if="item.task.nodeType === 1 && item.task.planStartDate && item.actualBarWidth > 0"
+                           class="gantt-bar gantt-bar-actual" :class="'gantt-bar-status-' + item.actualDisplayStatus"
+                           :style="{ left: item.actualBarLeft + 'px', width: item.actualBarWidth + 'px' }"
+                           :title="'【实际】' + item.task.taskName + (item.task.actualStartDate ? ' (' + item.task.actualStartDate.slice(0,10) + (item.task.actualFinishDate ? ' ~ ' + item.task.actualFinishDate.slice(0,10) : ' ~ 进行中') + ')' : ' (同计划)')"
+                           @dblclick="handleGanttBarDblClick(item.task)">
+                        <div v-if="item.task.progressPct > 0" class="gantt-bar-progress" :style="{ width: item.task.progressPct + '%' }"></div>
+                      </div>
+                      <!-- 文字层：z-index 高于 SVG 前置线，始终显示在最上层 -->
+                      <span v-if="item.task.nodeType === 1 && item.task.planStartDate && item.barWidth > 60" class="gantt-bar-label" :style="{ left: item.barLeft + 'px', width: item.barWidth + 'px' }">{{ item.task.taskName }}</span>
+                      <span v-if="item.task.nodeType === 1 && item.task.planStartDate && item.actualBarWidth > 0 && item.task.progressPct > 0" class="gantt-bar-pct" :class="'gantt-pct-status-' + item.actualDisplayStatus" :style="{ left: (item.actualBarLeft - 8) + 'px', top: '30px', transform: 'translateX(-100%)' }">{{ item.task.progressPct }}%</span>
+                      <span v-if="item.task.nodeType === 1 && item.task.planStartDate && item.barWidth > 0 && (item.task.deptName || item.task.assigneeName)" class="gantt-bar-info" :style="{ left: (item.barLeft + item.barWidth + 18) + 'px' }"><span v-if="item.task.deptName" class="gantt-info-dept">{{ item.task.deptName }}</span><span v-if="item.task.assigneeName" class="gantt-info-person" style="margin-left:10px">{{ item.task.assigneeName }}</span></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
       </el-tab-pane>
 
       <!-- ── Tab 5：任务列表（看板）── -->
       <el-tab-pane label="任务列表" name="board" :disabled="!projectId" class="tab-pane-fill">
         <div class="board-tab-wrapper">
-          <ProjectKanban :tasks="tasks" :dict-map="dictMap" @view="openViewTask" />
+          <div style="display:flex;gap:8px;margin-bottom:12px">
+            <span style="line-height:32px;font-size:14px;font-weight:600">分组方式：</span>
+            <el-radio-group v-model="boardGroupMode" size="small">
+              <el-radio-button value="assignee">负责人</el-radio-button>
+              <el-radio-button value="dept">责任部门</el-radio-button>
+              <el-radio-button value="category">任务类别</el-radio-button>
+            </el-radio-group>
+          </div>
+          <div class="board-container">
+          <div v-for="col in boardData" :key="col.category" class="board-column">
+            <div class="board-column-header">
+              <span class="board-column-title">{{ getGroupLabel(col.category) }}</span>
+              <el-tag size="small" type="info">{{ col.tasks.length }} 条</el-tag>
+            </div>
+            <div class="board-column-body">
+              <div v-for="task in col.tasks" :key="task.id" class="task-card" style="cursor:pointer" @click="openViewTask(task)">
+                <div class="task-card-header">
+                  <span class="task-card-title">{{ task.taskNo }}<br/>{{ task.taskName }}</span>
+                  <el-tag :type="taskStatusTag(task.status)" size="small">{{ taskStatusLabel(task.status) || '未开始' }}</el-tag>
+                </div>
+                <div class="task-card-meta">
+                  <span v-if="task.wbsCode">工序号：{{ task.wbsCode }}</span>
+                  <span v-if="task.assigneeName">负责人：{{ task.assigneeName }}</span>
+                </div>
+                <div class="task-card-footer">
+                  <span class="task-card-date" v-if="task.planFinishDate">截止：{{ task.planFinishDate.slice(0,10) }}</span>
+                  <span class="task-card-progress">完成进度：{{ task.progressPct }}%</span>
+                </div>
+                <el-progress :percentage="Number(task.progressPct)" :show-text="false" :stroke-width="4" style="margin-top:6px" />
+              </div>
+              <div v-if="col.tasks.length === 0" class="board-empty">暂无数据</div>
+            </div>
+          </div>
+        </div>
         </div>
       </el-tab-pane>
 
@@ -2781,27 +3981,384 @@ onMounted(async () => {
     </el-tabs>
 
     <!-- ── 从模板新增任务对话框 ── -->
-    <TaskTemplateDialog ref="templateDialogRef" :project-id="projectId" @imported="onTemplateImported" />
+    <el-dialog v-model="showTemplateDialog" title="从模板新增任务" width="832px" :close-on-click-modal="false">
+      <el-input v-model="templateSearch" placeholder="搜索模板编号或名称..." clearable style="margin-bottom:12px" />
+      <el-table
+        :data="filteredTemplates"
+        border
+        size="small"
+        style="width:100%"
+        max-height="480"
+        highlight-current-row
+        @current-change="(row: Template | null) => selectedTemplateId = row?.id ?? null"
+      >
+        <el-table-column width="50" align="center">
+          <template #default="{ row }">
+            <el-radio :model-value="selectedTemplateId" :value="row.id" @change="selectedTemplateId = row.id">
+              <span></span>
+            </el-radio>
+          </template>
+        </el-table-column>
+        <el-table-column prop="templateCode" label="模板编号" width="185" />
+        <el-table-column prop="templateName" label="模板名称" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip />
+      </el-table>
+      <template #footer>
+        <el-button @click="showTemplateDialog = false">取消</el-button>
+        <el-button type="danger" :loading="templateLoading" @click="handleCreateFromTemplate">确定</el-button>
+      </template>
+    </el-dialog>
 
     <!-- ── 新增/编辑任务对话框 ── -->
-    <TaskEditDialog
-      v-model:visible="taskEditDialogVisible"
-      :mode="taskEditDialogMode"
-      :task="taskEditDialogTask"
-      :parent-task="taskEditDialogParentTask"
-      :project-id="projectId"
-      :task-no-rule="taskNoRule"
-      :all-tasks="tasks"
-      :task-tree="taskTree"
-      :dict-map="dictMap"
-      :departments="departments"
-      :users="users"
-      :form-status="form.status"
-      @saved="onTaskSavedFromDialog"
-    />
+    <el-dialog v-model="showAddTaskDialog" :title="editingTask?.id ? '编辑任务' : '新增任务'" width="840px" :close-on-click-modal="false" top="5vh">
+      <el-form :model="editingTask" label-width="100px" size="default">
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="序号">
+              <el-input v-model="editingTask.taskNo" disabled placeholder="保存后自动生成" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="任务名称" required>
+              <el-input v-model="editingTask.taskName" placeholder="请输入任务名称" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="上级节点">
+              <el-select
+                v-model="editingTask.parentId"
+                placeholder="无（根节点）"
+                clearable
+                filterable
+                style="width:100%"
+                @change="(val: number | null) => { onParentChange(val) }"
+              >
+                <el-option
+                  v-for="opt in flatParentOptions"
+                  :key="opt.id"
+                  :label="opt.displayLabel"
+                  :value="opt.id"
+                />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="工序号">
+              <el-input v-model="editingTask.wbsCode" placeholder="如：T1-1" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="任务类别">
+              <el-select v-model="editingTask.taskCategory" placeholder="请选择" clearable style="width:100%">
+                <el-option v-for="item in (dictMap['task_category'] || [])" :key="item.dictCode" :label="item.dictLabel" :value="item.dictCode" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="节点类型">
+              <el-radio-group v-model="editingTask.nodeType">
+                <el-radio :value="1">任务</el-radio>
+                <el-radio :value="2">里程碑</el-radio>
+              </el-radio-group>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="优先级">
+              <el-select v-model="editingTask.priority" style="width:100%">
+                <el-option v-for="o in taskPriorityOptions" :key="o.value" :label="o.label" :value="o.value" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="状态">
+              <el-select v-model="editingTask.status" style="width:100%">
+                <el-option v-for="o in taskStatusOptions" :key="o.value" :label="o.label" :value="o.value" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="责任部门">
+              <el-tree-select
+                v-model="editingTask.deptId"
+                :data="deptTreeData"
+                :props="{ label: 'name', children: 'children', value: 'id' }"
+                node-key="id"
+                check-strictly
+                placeholder="请选择部门"
+                clearable
+                filterable
+                style="width:100%"
+                @change="(val: number) => { editingTask.deptName = departments.find(d => d.id === val)?.name ?? ''; editingTask.assigneeName = ''; editingTask.assigneeId = undefined }"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="责任人">
+              <el-select v-model="editingTask.assigneeName" filterable clearable placeholder="请选择人员" style="width:100%" @change="(val: string) => { if (!val) { editingTask.assigneeId = undefined; return }; const u = users.find(u => u.realName === val); if(u) { editingTask.assigneeId = u.id; editingTask.deptId = u.departmentId; editingTask.deptName = departments.find(d => d.id === u.departmentId)?.name ?? '' } }">
+                <el-option v-for="u in users.filter(u => !editingTask.deptId || u.departmentId === editingTask.deptId)" :key="u.id" :label="u.realName" :value="u.realName" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="参考工期">
+              <el-input-number v-model="editingTask.referenceDuration" :min="0" style="width:100%" :disabled="editingTask?.nodeType === 2" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="前置任务">
+              <div class="predecessor-section">
+                <el-button
+                  type="primary"
+                  size="small"
+                  @click="addPredRow"
+                  :disabled="availablePredTasks.length === 0"
+                >
+                  + 添加前置任务
+                </el-button>
+                <div v-if="predRows.length === 0" class="predecessor-empty">
+                  尚未设置前置任务
+                </div>
+                <div v-for="row in predRows" :key="row.rowKey" class="predecessor-row">
+                  <el-select
+                    v-model="row.taskId"
+                    placeholder="选择前置任务"
+                    filterable
+                    style="width: 180px"
+                  >
+                    <el-option
+                      v-for="t in getAvailableForPredRow(row.rowKey)"
+                      :key="t.id"
+                      :label="`${t.taskNo} - ${t.taskName}`"
+                      :value="t.id"
+                    />
+                  </el-select>
+                  <el-select v-model="row.dependencyType" style="width: 150px; margin-left: 8px;">
+                    <el-option label="完成-开始 (FS)" value="FS" />
+                    <el-option label="开始-开始 (SS)" value="SS" />
+                    <el-option label="完成-完成 (FF)" value="FF" />
+                    <el-option label="开始-完成 (SF)" value="SF" />
+                  </el-select>
+                  <el-input-number
+                    v-model="row.lagDays"
+                    :min="-999"
+                    :max="999"
+                    controls-position="right"
+                    style="width: 120px; margin-left: 8px;"
+                  />
+                  <span class="unit-suffix">天</span>
+                  <el-button
+                    type="danger"
+                    link
+                    size="small"
+                    style="margin-left: 8px;"
+                    @click="removePredRow(row.rowKey)"
+                  >删除</el-button>
+                </div>
+              </div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="完成进度(%)">
+              <el-input-number v-model="editingTask.progressPct" :min="0" :max="100" :precision="1" style="width:100%" :disabled="editingTask?.nodeType === 2 || taskHasChildren(editingTask.id) || !editingTask?.actualStartDate" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-card shadow="never" class="group-card">
+              <template #header><span class="group-title">计划时间</span></template>
+              <el-row :gutter="24">
+                <el-col :span="8">
+                  <el-form-item label="计划开始">
+                    <el-date-picker v-model="editingTask.planStartDate" type="date" style="width:100%" value-format="YYYY-MM-DDTHH:mm:ss" :disabled="editingTask?.nodeType === 2 || taskHasChildren(editingTask.id) || form.status !== 0" :placeholder="editingTask?.nodeType === 2 ? '里程碑与计划完成同步' : '有子节点时由子节点自动计算'" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="计划完成">
+                    <el-date-picker v-model="editingTask.planFinishDate" type="date" style="width:100%" value-format="YYYY-MM-DDTHH:mm:ss" :disabled="taskHasChildren(editingTask.id) || form.status !== 0" placeholder="有子节点时由子节点自动计算" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="计划工期">
+                    <el-input-number v-model="editingTask.planDuration" :min="0" style="width:100%" disabled placeholder="由系统自动计算" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </el-card>
+          </el-col>
+          <el-col :span="24">
+            <el-card shadow="never" class="group-card">
+              <template #header><span class="group-title">实际时间</span></template>
+              <el-row :gutter="24">
+                <el-col :span="8">
+                  <el-form-item label="实际开始">
+                    <el-date-picker v-model="editingTask.actualStartDate" type="date" style="width:100%" value-format="YYYY-MM-DDTHH:mm:ss" :disabled="editingTask?.nodeType === 2 || taskHasChildren(editingTask.id)" placeholder="有子节点时由子节点自动计算" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="实际完成">
+                    <el-date-picker v-model="editingTask.actualFinishDate" type="date" style="width:100%" value-format="YYYY-MM-DDTHH:mm:ss" :disabled="taskHasChildren(editingTask.id)" placeholder="有子节点时由子节点自动计算" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="实际工期">
+                    <el-input-number v-model="editingTask.actualDuration" :min="0" style="width:100%" disabled placeholder="由系统自动计算" />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </el-card>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="备注" class="remark-item">
+              <el-input v-model="editingTask.remark" type="textarea" :rows="2" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAddTaskDialog = false">取消</el-button>
+        <el-button type="danger" :loading="taskSaving" @click="handleSaveTask">确定</el-button>
+      </template>
+    </el-dialog>
 
     <!-- ── 查看任务详情对话框 ── -->
-    <TaskViewDialog v-model:visible="showViewTaskDialog" :task="viewingTask" :dict-map="dictMap" :users="users" :departments="departments" :all-tasks="tasks" />
+    <el-dialog v-model="showViewTaskDialog" title="任务详情" width="840px" :close-on-click-modal="false" top="5vh">
+      <el-form v-if="viewingTask" :model="viewingTask" label-width="100px" size="default" disabled>
+        <el-row :gutter="16">
+          <el-col :span="12">
+            <el-form-item label="序号">
+              <el-input :model-value="viewingTask.taskNo" disabled />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="任务名称">
+              <el-input :model-value="viewingTask.taskName" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="工序号">
+              <el-input :model-value="viewingTask.wbsCode || ''" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="任务类别">
+              <el-select :model-value="viewingTask.taskCategory" placeholder="请选择" style="width:100%">
+                <el-option v-for="item in (dictMap['task_category'] || [])" :key="item.dictCode" :label="item.dictLabel" :value="item.dictCode" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="节点类型">
+              <el-radio-group :model-value="viewingTask.nodeType">
+                <el-radio :value="1">任务</el-radio>
+                <el-radio :value="2">里程碑</el-radio>
+              </el-radio-group>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="优先级">
+              <el-select :model-value="viewingTask.priority" style="width:100%">
+                <el-option v-for="o in taskPriorityOptions" :key="o.value" :label="o.label" :value="o.value" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="状态">
+              <el-select :model-value="viewingTask.status" style="width:100%">
+                <el-option v-for="o in taskStatusOptions" :key="o.value" :label="o.label" :value="o.value" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="责任部门">
+              <el-tree-select
+                :model-value="viewingTask.deptId"
+                :data="deptTreeData"
+                :props="{ label: 'name', children: 'children', value: 'id' }"
+                node-key="id"
+                check-strictly
+                placeholder="请选择部门"
+                clearable
+                filterable
+                style="width:100%"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="责任人">
+              <el-select :model-value="viewingTask.assigneeName" filterable clearable placeholder="请选择人员" style="width:100%">
+                <el-option v-for="u in users.filter(u => !viewingTask.deptId || u.departmentId === viewingTask.deptId)" :key="u.id" :label="u.realName" :value="u.realName" />
+              </el-select>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="参考工期">
+              <el-input-number :model-value="viewingTask.referenceDuration" :min="0" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="前置任务">
+              <el-input :model-value="formatPreTaskCodes(viewingTask.preTaskCodes, taskIdMap) || '尚未设置前置任务'" disabled />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="完成进度(%)">
+              <el-input-number :model-value="viewingTask.progressPct" :min="0" :max="100" :precision="1" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="24">
+            <el-card shadow="never" class="group-card">
+              <template #header><span class="group-title">计划时间</span></template>
+              <el-row :gutter="24">
+                <el-col :span="8">
+                  <el-form-item label="计划开始">
+                    <el-date-picker :model-value="viewingTask.planStartDate" type="date" style="width:100%" value-format="YYYY-MM-DDTHH:mm:ss" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="计划完成">
+                    <el-date-picker :model-value="viewingTask.planFinishDate" type="date" style="width:100%" value-format="YYYY-MM-DDTHH:mm:ss" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="计划工期">
+                    <el-input-number :model-value="viewingTask.planDuration" :min="0" style="width:100%" disabled />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </el-card>
+          </el-col>
+          <el-col :span="24">
+            <el-card shadow="never" class="group-card">
+              <template #header><span class="group-title">实际时间</span></template>
+              <el-row :gutter="24">
+                <el-col :span="8">
+                  <el-form-item label="实际开始">
+                    <el-date-picker :model-value="viewingTask.actualStartDate" type="date" style="width:100%" value-format="YYYY-MM-DDTHH:mm:ss" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="实际完成">
+                    <el-date-picker :model-value="viewingTask.actualFinishDate" type="date" style="width:100%" value-format="YYYY-MM-DDTHH:mm:ss" />
+                  </el-form-item>
+                </el-col>
+                <el-col :span="8">
+                  <el-form-item label="实际工期">
+                    <el-input-number :model-value="viewingTask.actualDuration" :min="0" style="width:100%" disabled />
+                  </el-form-item>
+                </el-col>
+              </el-row>
+            </el-card>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="备注" class="remark-item">
+              <el-input :model-value="viewingTask.remark || ''" type="textarea" :rows="2" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+      <template #footer>
+        <el-button type="primary" @click="showViewTaskDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
   </div>
 </template>
@@ -3159,6 +4716,413 @@ onMounted(async () => {
   font-size: 14px;
 }
 
+/* ───────── 甘特图 ───────── */
+.gantt-wrapper {
+  border: 1px solid #e4e7ed;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #fff;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.gantt-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 6px 12px;
+  flex-shrink: 0;
+  border-bottom: 1px solid #ebeef5;
+  background: #fafafa;
+}
+
+.gantt-container {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.gantt-left {
+  flex-shrink: 0;
+  border-right: 1px solid #e4e7ed;
+  overflow: hidden;
+  background: #fff;
+  position: relative;
+}
+.gantt-resize-handle {
+  width: 6px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s;
+  align-self: stretch;
+}
+.gantt-resize-handle:hover,
+.gantt-resize-handle:active {
+  background: #409EFF;
+}
+.gantt-panel-resize {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 10;
+}
+.gantt-panel-resize:hover {
+  background: rgba(64, 158, 255, 0.4);
+}
+
+.gantt-left-header {
+  display: flex;
+  height: 54px;
+  line-height: 54px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  border-bottom: 1px solid #e4e7ed;
+  background: #fafafa;
+  box-sizing: border-box;
+}
+.gantt-header-seq {
+  flex-shrink: 0;
+  padding-left: 16px;
+  border-right: 1px solid #e4e7ed;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.gantt-header-name {
+  flex: 1;
+  padding-left: 8px;
+}
+
+.gantt-left-body {
+  overflow-y: auto;
+  height: calc(100% - 54px);
+}
+
+.gantt-left-body::-webkit-scrollbar { width: 8px; }
+.gantt-left-body::-webkit-scrollbar-track { background: transparent; }
+.gantt-left-body::-webkit-scrollbar-thumb { background: #c0c4cc; border-radius: 4px; }
+.gantt-left-body::-webkit-scrollbar-thumb:hover { background: #a8abb2; }
+
+.gantt-right {
+  flex: 1;
+  overflow: auto;
+  position: relative;
+}
+
+.gantt-right::-webkit-scrollbar { width: 8px; height: 8px; }
+.gantt-right::-webkit-scrollbar-track { background: transparent; }
+.gantt-right::-webkit-scrollbar-thumb { background: #c0c4cc; border-radius: 4px; }
+.gantt-right::-webkit-scrollbar-thumb:hover { background: #a8abb2; }
+.gantt-right::-webkit-scrollbar-corner { background: transparent; }
+
+.gantt-timeline {
+  position: relative;
+  min-width: 100%;
+}
+
+.gantt-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #fafafa;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.gantt-header-row {
+  display: flex;
+  height: 27px;
+  line-height: 27px;
+}
+
+.gantt-month-cell {
+  font-size: 12px;
+  font-weight: 600;
+  color: #303133;
+  text-align: center;
+  border-right: 1px solid #ebeef5;
+  box-sizing: border-box;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.gantt-day-cell {
+  font-size: 10px;
+  color: #606266;
+  text-align: center;
+  border-right: 1px solid #ebeef5;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.gantt-day-weekend {
+  color: #e74c3c;
+  background: #fef0f0;
+}
+
+.gantt-day-today {
+  background: #e6f7ff;
+  font-weight: 700;
+  color: #1890ff;
+}
+.gantt-weeknum-row {
+  background: #f5f7fa;
+}
+.gantt-weeknum-cell {
+  font-size: 12px;
+  font-weight: 600;
+  color: #303133;
+  text-align: center;
+  border-right: 1px solid #ebeef5;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.gantt-body {
+  position: relative;
+}
+.gantt-dep-svg {
+  overflow: hidden;
+}
+
+.gantt-row {
+  display: flex;
+  align-items: center;
+  height: 54px;
+  box-sizing: border-box;
+  position: relative;
+  border-bottom: 1px solid #f2f2f2;
+}
+
+.gantt-row-alt {
+  background: #fafafa;
+}
+
+.gantt-task-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #303133;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  line-height: 54px;
+  cursor: default;
+}
+
+.gantt-task-no {
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font-size: 12px;
+  color: #606266;
+  text-align: left;
+  padding-left: 16px;
+  line-height: 54px;
+  border-right: 1px solid #ebeef5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gantt-task-icon {
+  font-size: 12px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.gantt-bar {
+  position: absolute;
+  height: 17px;
+  border-radius: 3px;
+  min-width: 4px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+  overflow: hidden;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  z-index: 2;
+}
+
+.gantt-bar-plan {
+  top: 6px;
+  opacity: 1;
+}
+
+.gantt-bar-actual {
+  top: 30px;
+  border-radius: 2px;
+}
+
+.gantt-bar:hover {
+  opacity: 0.92;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+}
+
+.gantt-bar-label {
+  position: absolute;
+  top: 6px;
+  height: 17px;
+  line-height: 17px;
+  z-index: 20;
+  font-size: 10px;
+  font-weight: 600;
+  color: #303133;
+  padding: 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+/* 计划条：靓紫底黑字 */
+.gantt-bar-plan { background: #e4b8ff !important; border: 1px solid #a855f7 !important; }
+
+/* 实际条：沿用原状态颜色 */
+.gantt-bar-actual.gantt-bar-status-0 { background: #d9d9d9; border: 1px solid #bfbfbf; }
+.gantt-bar-actual.gantt-bar-status-1 { background: #b3d8ff; border: 1px solid #409EFF; }
+.gantt-bar-actual.gantt-bar-status-2 { background: #b3e19d; border: 1px solid #67C23A; }
+.gantt-bar-actual.gantt-bar-status-3 { background: #fbc4c4; border: 1px solid #F56C6C; }
+
+.gantt-bar-progress {
+  height: 100%;
+  background: rgba(255,255,255,0.5);
+  border-radius: 2px 0 0 2px;
+  position: absolute;
+  z-index: 1;
+  left: 0;
+  top: 0;
+  transition: width 0.3s;
+}
+
+.gantt-bar-status-2 .gantt-bar-progress { background: #67C23A; }
+.gantt-bar-status-1 .gantt-bar-progress { background: #409EFF; }
+
+.gantt-bar-info {
+  position: absolute;
+  top: 6px;
+  height: 17px;
+  line-height: 17px;
+  font-size: 10px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 20;
+}
+.gantt-bar-pct {
+  position: absolute;
+  top: 6px;
+  height: 17px;
+  line-height: 17px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+  z-index: 20;
+}
+.gantt-pct-status-0 { color: #909399; }
+.gantt-pct-status-1 { color: #409EFF; }
+.gantt-pct-status-2 { color: #67C23A; }
+.gantt-pct-status-3 { color: #F56C6C; }
+.gantt-info-dept { color: #303133; font-weight: 600; }
+.gantt-info-person { color: #303133; }
+
+.gantt-milestone {
+  position: absolute;
+  top: 20px;
+  width: 14px;
+  height: 14px;
+  background: #e74c3c;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  cursor: pointer;
+  z-index: 20;
+  box-shadow: 0 1px 3px rgba(231,76,60,0.4);
+}
+
+.gantt-milestone:hover {
+  transform: rotate(45deg) scale(1.2);
+}
+
+.gantt-today-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: #F56C6C;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.gantt-today-label {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  font-size: 10px;
+  color: #F56C6C;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+/* 图例 */
+.gantt-legend {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.gantt-legend-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #303133;
+  margin-right: 4px;
+}
+.gantt-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  color: #606266;
+}
+.gantt-legend-swatch {
+  display: inline-block;
+  width: 16px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.swatch-0 { background: #d9d9d9; border: 1px solid #bfbfbf; }
+.swatch-1 { background: #b3d8ff; border: 1px solid #409EFF; }
+.swatch-2 { background: #b3e19d; border: 1px solid #67C23A; }
+.swatch-3 { background: #fbc4c4; border: 1px solid #F56C6C; }
+.gantt-legend-diamond {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  background: #e74c3c;
+  transform: rotate(45deg);
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.gantt-legend-today {
+  display: inline-block;
+  width: 2px;
+  height: 14px;
+  background: #F56C6C;
+  flex-shrink: 0;
+}
+.gantt-legend-divider {
+  width: 1px;
+  height: 14px;
+  background: #dcdfe6;
+  margin: 0 4px;
+}
 
 /* 任务右键上下文菜单 */
 .task-ctx-mask {
@@ -3208,6 +5172,13 @@ onMounted(async () => {
   background: #ecf5ff !important;
 }
 
+.gantt-critical-path {
+  stroke-dashoffset: 13;
+  animation: gantt-critical-flow 0.8s linear infinite;
+}
+@keyframes gantt-critical-flow {
+  to { stroke-dashoffset: 0; }
+}
 
 /* ─── 前置任务悬浮提示 ─── */
 .pcell {
