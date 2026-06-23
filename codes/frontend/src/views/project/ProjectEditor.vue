@@ -699,8 +699,8 @@ interface TaskColumnDef {
   draggable: boolean; className?: string
 }
 const DEFAULT_TASK_COLUMNS: TaskColumnDef[] = [
-  { key: 'index', label: '序号', width: 70, fixed: 'left', draggable: false },
-  { key: 'taskName', label: '任务名称', minWidth: 316, width: 316, fixed: 'left', draggable: false },
+  { key: 'index', label: '序号', width: 70, draggable: false, className: 'col-index' },
+  { key: 'taskName', label: '任务名称', minWidth: 316, width: 316, draggable: false, className: 'col-taskname' },
   { key: 'progress', label: '进度', width: 106, align: 'center', draggable: true },
   { key: 'planStartDate', label: '计划开始', width: 110, align: 'center', draggable: true },
   { key: 'planFinishDate', label: '计划完成', width: 110, align: 'center', draggable: true },
@@ -2322,18 +2322,26 @@ const milestoneTasks = computed(() =>
   tasks.value.filter(t => t.nodeType === 2).sort((a, b) => (a.taskNo || '').localeCompare(b.taskNo || '', undefined, { numeric: true }))
 )
 
-/** 序号列宽根据最长 taskNo 自动适配 */
+/** 序号列宽根据最长 taskNo 和树深度自动适配（树缩进 16px/层 + 展开图标 18px） */
 const taskNoColWidth = computed(() => {
   let maxLen = 0
-  function walk(nodes: ProjectTaskItem[]) {
+  let maxDepth = 0
+  function walk(nodes: ProjectTaskItem[], depth: number) {
     for (const n of nodes) {
       const s = n.taskNo || ''
       if (s.length > maxLen) maxLen = s.length
-      if (n.children) walk(n.children)
+      if (depth > maxDepth) maxDepth = depth
+      if (n.children) walk(n.children, depth + 1)
     }
   }
-  walk(taskTree.value)
-  return Math.max(60, maxLen * 7.5 + 30)
+  walk(taskTree.value, 0)
+  // 每字符 10px + 树缩进 16px/层 + 展开图标 ~22px + 单元格内边距 ~26px
+  return Math.max(60, maxLen * 10 + maxDepth * 16 + 48)
+})
+
+// 序号列宽变化时同步 fixed 列表格布局，避免固定列宽度不同步导致换行
+watch(taskNoColWidth, () => {
+  nextTick(() => { (taskTableRef.value as any)?.doLayout?.() })
 })
 
 /* ───────── 模板新增 ───────── */
@@ -2967,7 +2975,7 @@ function calcSeqAutoWidth() {
     const s = item.task.taskNo || ''
     if (s.length > maxLen) maxLen = s.length
   }
-  return Math.max(56, maxLen * 7 + 28)
+  return Math.max(56, maxLen * 9 + 30)
 }
 watch(ganttFlattenedTasks, () => {
   ganttSeqWidth.value = calcSeqAutoWidth()
@@ -3540,6 +3548,7 @@ onMounted(async () => {
               ref="taskTableRef"
               :data="taskTree"
               row-key="id"
+              :style="{ '--index-col-width': taskNoColWidth + 'px' as any }"
               :tree-props="{ children: 'children' }"
               v-loading="cascadeLoading || ctxMenuLoading"
               element-loading-text="正在级联更新后续任务日期..."
@@ -5214,4 +5223,16 @@ onMounted(async () => {
 :deep(.col-sticky-right) { position: sticky !important; right: 0 !important; z-index: 2 !important; background: #fff !important; }
 :deep(.el-table__header-wrapper .col-sticky-right) { z-index: 3 !important; }
 :deep(.el-table__body-wrapper tr:hover .col-sticky-right) { background-color: #f5f7fa !important; }
+
+/* ─── 左固定列（CSS sticky 替代 Element fixed，解决树表格固定层宽度不同步问题） ─── */
+:deep(td.col-index),
+:deep(th.col-index) { position: sticky !important; left: 0 !important; z-index: 2 !important; background: #fff !important; }
+:deep(td.col-taskname),
+:deep(th.col-taskname) { position: sticky !important; left: var(--index-col-width, 70px) !important; z-index: 2 !important; background: #fff !important; }
+:deep(.el-table__header-wrapper .col-index),
+:deep(.el-table__header-wrapper .col-taskname) { z-index: 3 !important; }
+:deep(.el-table__body-wrapper tr:hover td.col-index),
+:deep(.el-table__body-wrapper tr:hover td.col-taskname) { background-color: #f5f7fa !important; }
+/* 序号列防止树缩进导致换行 */
+:deep(td.col-index .cell) { white-space: nowrap !important; }
 </style>
