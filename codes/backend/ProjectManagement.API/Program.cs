@@ -145,7 +145,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    try { db.Database.EnsureCreated(); } catch { /* 数据库已存在，跳过 */ }
 
     // 从 SQLite 迁移数据到 SQL Server（库文件存在时才执行）
     var sqlitePath = builder.Configuration["Migration:SqlitePath"];

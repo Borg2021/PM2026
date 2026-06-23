@@ -9,9 +9,9 @@ import {
   saveProjectMembers,
   getProjectTasks, createProjectTask, updateProjectTask, deleteProjectTask, createTasksFromTemplate,
 } from '@/api/project'
-import { getDepartments, getRoles, searchUsers, getDictByType, getTemplateList, getTemplateDetail } from '@/api/template'
+import { getDepartments, searchUsers, getDictByType, getTemplateList, getTemplateDetail } from '@/api/template'
 import { getSysParamByKey, getFunctionList } from '@/api/system'
-import { formatPreTaskCodes, parsePreTaskCodes, serializePreTaskCodes } from '@/utils/preTaskHelpers'
+import { formatPreTaskCodes, parsePreTaskCodes } from '@/utils/preTaskHelpers'
 import { buildDeptTree } from '@/utils/deptTree'
 import { taskStatusOptions, taskPriorityOptions, overdueStatus, statusLabel as taskStatusLabel, priorityLabel } from '@/utils/taskConstants'
 import ProjectFileTab from './components/ProjectFileTab.vue'
@@ -22,7 +22,7 @@ import type {
   ProjectDetail, ProductItem, ProjectMemberItem,
   ProjectTaskItem
 } from '@/types/project'
-import type { Department, RoleDict, UserInfo, Template } from '@/types/template'
+import type { Department, UserInfo, Template } from '@/types/template'
 import type { FunctionItem } from '@/types/system'
 
 /* ───────── 路由参数 ───────── */
@@ -48,12 +48,10 @@ const pageTitle = computed(() => mode.value === 'create' ? '新建项目' : mode
 
 /* ───────── Tab ───────── */
 const activeTab = ref('basic')
-const filesTabMounted = ref(false)  // 首次切到文件 Tab 后设为 true，避免组件销毁重建
-watch(activeTab, (tab) => { if (tab === 'files') filesTabMounted.value = true })
+const filesTabMounted = ref(false)  // 首次切到文件 Tab 后设为 true，避免组件销毁重建（见 onTabChange）
 
 /* ───────── 辅助数据 ───────── */
 const departments = ref<Department[]>([])
-const roles = ref<RoleDict[]>([])
 const functions = ref<FunctionItem[]>([])
 const users = ref<UserInfo[]>([])
 const taskNoRule = ref('')
@@ -116,7 +114,6 @@ const isCurrentUserPm = computed(() => {
 })
 
 /** 通过模板导入后，保护基本信息中已设置的成员不被修改/删除 */
-const templateImported = ref(false)
 
 /** 判断成员行是否被锁定（不可修改/删除）—— 项目经理、销售、售前始终锁定 */
 function isMemberLocked(row: { memberId?: number | null }): boolean {
@@ -136,15 +133,8 @@ function getDictLabel(dictType: string, code: string | undefined): string {
 }
 
 const deptTreeData = computed(() => buildDeptTree(departments.value))
-const fileList = ref<any[]>([])
-const uploadRef = ref()
-const tempUploadKey = ref('temp_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8))
-const uploadedFileIds = ref<number[]>([])
-const getToken = () => localStorage.getItem('token')
 
-function handleUploadSuccess(res: any) {
-  if (res.code === 0 && res.data?.id) uploadedFileIds.value.push(res.data.id)
-}
+const uploadedFileIds = ref<number[]>([])
 
 /* ───────── 表单数据 ───────── */
 const formRef = ref()
@@ -368,8 +358,6 @@ async function confirmImportMemberTemplate() {
     members.value.push(...enriched)
     // 重新排序号
     members.value.forEach((m, i) => { m.sortOrder = i + 1 })
-    // 标记模板已导入
-    templateImported.value = true
     ElMessage.success(`已从模板「${res.data.templateName}」导入 ${enriched.length} 项`)
     // 关闭弹框
     memberTemplateDialogVisible.value = false
@@ -1659,6 +1647,10 @@ async function renumberSubtree(rootId: number) {
   }
 }
 
+function newTaskForm(): ProjectTaskItem {
+  return { parentId: null, taskNo: '', wbsCode: '', taskName: '', nodeType: 1, taskCategory: '', sortOrder: tasks.value.length + 1, status: 0, priority: 3, deliverableCnt: 0, progressPct: 0, remark: '' }
+}
+
 /**
  * 右键插入/新增同级任务
  * @param before true=在当前任务之前插入，false=之后新增
@@ -1823,7 +1815,7 @@ async function saveListEdits(): Promise<boolean> {
     // 保存后重新拍快照，保持编辑状态
     const snapshots = new Map<number, ProjectTaskItem>()
     for (const t of tasks.value) {
-      if (t.id != null) snapshots.set(t.id, JSON.parse(JSON.stringify(t)))
+      if (t.id != null) snapshots.set(t.id, { ...t })
     }
     originalRowSnapshots.value = snapshots
 
@@ -1922,7 +1914,7 @@ async function handleToggleEditMode(newVal: boolean) {
     // 进入编辑模式时预拍所有行快照，用于"不保存"时还原
     const snapshots = new Map<number, ProjectTaskItem>()
     for (const t of tasks.value) {
-      if (t.id != null) snapshots.set(t.id, JSON.parse(JSON.stringify(t)))
+      if (t.id != null) snapshots.set(t.id, { ...t })
     }
     originalRowSnapshots.value = snapshots
     return
@@ -2316,6 +2308,7 @@ function buildTaskTree(flat: ProjectTaskItem[]): ProjectTaskItem[] {
 }
 
 const taskTree = computed(() => buildTaskTree(tasks.value))
+const taskIdMap = computed(() => new Map(tasks.value.filter(t => t.id).map(t => [t.id!, t] as [number, ProjectTaskItem])))
 
 /** 里程碑列表：从任务计划中筛选 nodeType === 2 的任务 */
 const milestoneTasks = computed(() =>
@@ -3037,15 +3030,14 @@ onMounted(async () => {
   if (projectId.value) await loadDetail()
 
   // 以下辅助数据后台加载，不影响基本信息显示
-  const [deptRes, roleRes, userRes, dictRes, prodDictRes, taskCatRes] = await Promise.allSettled([
-    getDepartments(), getRoles(), searchUsers(''),
+  const [deptRes, userRes, dictRes, prodDictRes, taskCatRes] = await Promise.allSettled([
+    getDepartments(), searchUsers(''),
     getDictByType('project_type'), getDictByType('product_type'), getDictByType('task_category')
   ])
   if (deptRes.status === 'fulfilled') {
     departments.value = deptRes.value.data
     resolveEngineeringCenterId()
   }
-  if (roleRes.status === 'fulfilled') roles.value = roleRes.value.data
   if (userRes.status === 'fulfilled') users.value = userRes.value.data
   if (dictRes.status === 'fulfilled' && prodDictRes.status === 'fulfilled' && taskCatRes.status === 'fulfilled') {
     dictMap.value = { project_type: dictRes.value.data, product_type: prodDictRes.value.data, task_category: taskCatRes.value.data }
@@ -3396,8 +3388,8 @@ onMounted(async () => {
               size="small"
               style="width:100%"
               :row-class-name="memberRowClassName"
-              @dragover.native="onMemberTableDragOver"
-              @drop.native="onMemberTableDrop"
+              @dragover.prevent="onMemberTableDragOver"
+              @drop.prevent="onMemberTableDrop"
             >
             <!-- 拖拽手柄列 -->
             <el-table-column v-if="!isReadonly" label="" width="40" align="center">
