@@ -1755,6 +1755,10 @@ function handleDateChange(row: ProjectTaskItem, field: 'planStartDate' | 'planFi
   if (field === 'actualFinishDate' && row.nodeType === 2) {
     row.actualStartDate = value || undefined
   }
+  // 非叶子节点的计划日期变更，向上同步父节点
+  if (!taskHasChildren(row.id) && (field === 'planStartDate' || field === 'planFinishDate')) {
+    syncParentPlanDates()
+  }
 }
 
 /** 保存列表编辑中的脏行，保存后仍保持编辑状态（刷新快照） */
@@ -1809,6 +1813,9 @@ async function saveListEdits(): Promise<boolean> {
         }
       }
       for (const childId of changedDescendantNos) cascadeNos.add(childId)
+      // 将脏行的直接父节点加入级联集合，确保父节点日期变化能传播到依赖它的后续任务
+      const parentTask = tasks.value.find(t => t.id === row.parentId)
+      if (parentTask?.id) cascadeNos.add(parentTask.id)
     }
     // 同步父节点日期 + 收集级联集合
     const parentCascadeNos = syncParentAndCollectChangedNos(cascadeNos)
