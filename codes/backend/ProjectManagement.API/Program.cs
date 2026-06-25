@@ -145,7 +145,7 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    db.Database.EnsureCreated();
+    try { db.Database.EnsureCreated(); } catch { /* 数据库已存在，跳过 */ }
 
     // 从 SQLite 迁移数据到 SQL Server（库文件存在时才执行）
     var sqlitePath = builder.Configuration["Migration:SqlitePath"];
@@ -215,6 +215,33 @@ CREATE UNIQUE INDEX [IX_UserFunctions_UserId_FunctionId] ON [UserFunctions] ([Us
         AddColumnIfNotExists(db, "Projects", "CustomerContactEmail", "NVARCHAR(MAX) NULL");
         AddColumnIfNotExists(db, "Projects", "OwnerContactPhone", "NVARCHAR(MAX) NULL");
         AddColumnIfNotExists(db, "Projects", "BusinessContactEmail", "NVARCHAR(MAX) NULL");
+        // 创建 DepartmentLeaders 表（多负责人）
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[DepartmentLeaders]') AND type = 'U')
+CREATE TABLE [DepartmentLeaders] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [DepartmentId] BIGINT NOT NULL, [UserId] BIGINT NOT NULL, CONSTRAINT [PK_DepartmentLeaders] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([DepartmentId]) REFERENCES [Departments]([Id]) ON DELETE CASCADE, FOREIGN KEY ([UserId]) REFERENCES [Users]([Id]))");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DepartmentLeaders_DepartmentId' AND object_id = OBJECT_ID(N'[dbo].[DepartmentLeaders]'))
+CREATE INDEX [IX_DepartmentLeaders_DepartmentId] ON [DepartmentLeaders] ([DepartmentId])");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DepartmentLeaders_UserId' AND object_id = OBJECT_ID(N'[dbo].[DepartmentLeaders]'))
+CREATE INDEX [IX_DepartmentLeaders_UserId] ON [DepartmentLeaders] ([UserId])");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_DepartmentLeaders_DeptId_UserId' AND object_id = OBJECT_ID(N'[dbo].[DepartmentLeaders]'))
+CREATE UNIQUE INDEX [IX_DepartmentLeaders_DeptId_UserId] ON [DepartmentLeaders] ([DepartmentId], [UserId])");
+
+        // 迁移旧数据：将 Departments.LeaderId 迁移到 DepartmentLeaders
+        {
+            var conn2 = db.Database.GetDbConnection();
+            var wasOpen2 = conn2.State == System.Data.ConnectionState.Open;
+            if (!wasOpen2) conn2.Open();
+            using var cmd2 = conn2.CreateCommand();
+            cmd2.CommandText = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'Departments' AND COLUMN_NAME = 'LeaderId'";
+            var oldLeaderIdExists = (int)cmd2.ExecuteScalar()! > 0;
+            if (!wasOpen2) conn2.Close();
+            if (oldLeaderIdExists)
+            {
+                db.Database.ExecuteSqlRaw(@"INSERT INTO [DepartmentLeaders] ([DepartmentId], [UserId])
+SELECT [Id], [LeaderId] FROM [Departments] WHERE [LeaderId] IS NOT NULL
+AND NOT EXISTS (SELECT 1 FROM [DepartmentLeaders] WHERE [DepartmentLeaders].[DepartmentId] = [Departments].[Id] AND [DepartmentLeaders].[UserId] = [Departments].[LeaderId])");
+            }
+        }
+
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[FileTemplateItems]') AND type = 'U')
 CREATE TABLE [FileTemplateItems] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [TemplateId] BIGINT NOT NULL, [SortOrder] INT NOT NULL DEFAULT 0, [FileName] NVARCHAR(200) NOT NULL DEFAULT '', [Required] INT NOT NULL DEFAULT 0, [DeptId] BIGINT NULL, [DeptName] NVARCHAR(MAX) NULL, [Remark] NVARCHAR(MAX) NULL, [IsPublic] INT NOT NULL DEFAULT 1, [ViewRoles] NVARCHAR(MAX) NULL, CONSTRAINT [PK_FileTemplateItems] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([TemplateId]) REFERENCES [Templates]([Id]) ON DELETE CASCADE)");
         AddColumnIfNotExists(db, "FileTemplateItems", "Remark", "NVARCHAR(MAX) NULL");
@@ -225,14 +252,46 @@ CREATE INDEX [IX_FileTemplateItems_TemplateId] ON [FileTemplateItems] ([Template
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ProjectFileItems]') AND type = 'U')
 CREATE TABLE [ProjectFileItems] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [ProjectId] BIGINT NOT NULL, [TemplateItemId] BIGINT NULL, [IsPublic] INT NOT NULL DEFAULT 1, [ViewRoles] NVARCHAR(MAX) NULL, [SortOrder] INT NOT NULL DEFAULT 0, [FileName] NVARCHAR(200) NOT NULL DEFAULT '', [Required] INT NOT NULL DEFAULT 0, [AssigneeId] BIGINT NULL, [AssigneeName] NVARCHAR(MAX) NULL, [DeptId] BIGINT NULL, [DeptName] NVARCHAR(MAX) NULL, [PlanFinishDate] NVARCHAR(MAX) NULL, [LatestVersionId] BIGINT NULL, [Remark] NVARCHAR(MAX) NULL, CONSTRAINT [PK_ProjectFileItems] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([ProjectId]) REFERENCES [Projects]([Id]) ON DELETE CASCADE)");
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ProjectFileVersions]') AND type = 'U')
-CREATE TABLE [ProjectFileVersions] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [ProjectFileItemId] BIGINT NOT NULL, [VersionNumber] INT NOT NULL DEFAULT 1, [FilePath] NVARCHAR(500) NOT NULL DEFAULT '', [OriginalFileName] NVARCHAR(MAX) NOT NULL DEFAULT '', [FileSize] BIGINT NOT NULL DEFAULT 0, [FileExt] NVARCHAR(MAX) NULL, [UploadedBy] BIGINT NOT NULL DEFAULT 0, [UploadedByName] NVARCHAR(MAX) NOT NULL DEFAULT '', [UploadedAt] DATETIME2 NOT NULL, [Remark] NVARCHAR(MAX) NULL, CONSTRAINT [PK_ProjectFileVersions] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([ProjectFileItemId]) REFERENCES [ProjectFileItems]([Id]) ON DELETE CASCADE)");
+CREATE TABLE [ProjectFileVersions] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [ProjectFileItemId] BIGINT NOT NULL, [VersionNumber] INT NOT NULL DEFAULT 1, [UploadedBy] BIGINT NOT NULL DEFAULT 0, [UploadedByName] NVARCHAR(MAX) NOT NULL DEFAULT '', [UploadedAt] DATETIME2 NOT NULL, [Remark] NVARCHAR(MAX) NULL, CONSTRAINT [PK_ProjectFileVersions] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([ProjectFileItemId]) REFERENCES [ProjectFileItems]([Id]) ON DELETE CASCADE)");
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectFileVersions_ItemId_Version' AND object_id = OBJECT_ID(N'[dbo].[ProjectFileVersions]'))
 CREATE UNIQUE INDEX [IX_ProjectFileVersions_ItemId_Version] ON [ProjectFileVersions] ([ProjectFileItemId], [VersionNumber])");
-        AddColumnIfNotExists(db, "ProjectFileVersions", "OriginalFileName", "NVARCHAR(MAX) NOT NULL DEFAULT ''");
+
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectFileItems_ProjectId' AND object_id = OBJECT_ID(N'[dbo].[ProjectFileItems]'))
 CREATE INDEX [IX_ProjectFileItems_ProjectId] ON [ProjectFileItems] ([ProjectId])");
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectFileVersions_ProjectFileItemId' AND object_id = OBJECT_ID(N'[dbo].[ProjectFileVersions]'))
 CREATE INDEX [IX_ProjectFileVersions_ProjectFileItemId] ON [ProjectFileVersions] ([ProjectFileItemId])");
+
+        // 新增 ProjectFileVersionFiles 表（多文件支持）
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ProjectFileVersionFiles]') AND type = 'U')
+CREATE TABLE [ProjectFileVersionFiles] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [ProjectFileVersionId] BIGINT NOT NULL, [FilePath] NVARCHAR(500) NOT NULL DEFAULT '', [OriginalFileName] NVARCHAR(MAX) NOT NULL DEFAULT '', [FileSize] BIGINT NOT NULL DEFAULT 0, [FileExt] NVARCHAR(MAX) NULL, CONSTRAINT [PK_ProjectFileVersionFiles] PRIMARY KEY CLUSTERED ([Id]), FOREIGN KEY ([ProjectFileVersionId]) REFERENCES [ProjectFileVersions]([Id]) ON DELETE CASCADE)");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectFileVersionFiles_ProjectFileVersionId' AND object_id = OBJECT_ID(N'[dbo].[ProjectFileVersionFiles]'))
+CREATE INDEX [IX_ProjectFileVersionFiles_ProjectFileVersionId] ON [ProjectFileVersionFiles] ([ProjectFileVersionId])");
+
+        // 将 ProjectFileVersions 中的单文件数据迁移到 ProjectFileVersionFiles（仅对有 FilePath 列的旧表执行）
+        var migrationConn = db.Database.GetDbConnection();
+        var migrationWasOpen = migrationConn.State == System.Data.ConnectionState.Open;
+        if (!migrationWasOpen) migrationConn.Open();
+        using var migrationCmd = migrationConn.CreateCommand();
+        migrationCmd.CommandText = "SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FilePath'";
+        var oldFilePathExists = (int)migrationCmd.ExecuteScalar()! > 0;
+        if (!migrationWasOpen) migrationConn.Close();
+        if (oldFilePathExists)
+        {
+            db.Database.ExecuteSqlRaw(@"INSERT INTO [ProjectFileVersionFiles] ([ProjectFileVersionId], [FilePath], [OriginalFileName], [FileSize], [FileExt])
+SELECT [Id], [FilePath], [OriginalFileName], [FileSize], [FileExt] FROM [ProjectFileVersions]
+WHERE EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FilePath')
+AND NOT EXISTS (SELECT 1 FROM [ProjectFileVersionFiles] WHERE [ProjectFileVersionFiles].[ProjectFileVersionId] = [ProjectFileVersions].[Id])");
+
+            // 数据迁移完成后删除旧列，否则 EF 插入新实体时报 NOT NULL 约束错误
+            db.Database.ExecuteSqlRaw(@"IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FilePath')
+ALTER TABLE [ProjectFileVersions] DROP COLUMN [FilePath]");
+            db.Database.ExecuteSqlRaw(@"IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'OriginalFileName')
+ALTER TABLE [ProjectFileVersions] DROP COLUMN [OriginalFileName]");
+            db.Database.ExecuteSqlRaw(@"IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FileSize')
+ALTER TABLE [ProjectFileVersions] DROP COLUMN [FileSize]");
+            db.Database.ExecuteSqlRaw(@"IF EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'ProjectFileVersions' AND COLUMN_NAME = 'FileExt')
+ALTER TABLE [ProjectFileVersions] DROP COLUMN [FileExt]");
+        }
     }
 
     await DbInitializer.EnsureSeedAsync(db);

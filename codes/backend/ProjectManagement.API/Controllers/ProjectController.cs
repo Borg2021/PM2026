@@ -778,7 +778,17 @@ public class ProjectController : ControllerBase
                 f.DeptId, f.DeptName, f.PlanFinishDate, f.LatestVersionId, f.Remark,
                 VersionCount = f.Versions.Count,
                 LatestVersion = f.LatestVersion != null
-                    ? new { f.LatestVersion.Id, f.LatestVersion.VersionNumber, f.LatestVersion.FileSize, f.LatestVersion.FileExt, f.LatestVersion.UploadedByName, f.LatestVersion.UploadedAt }
+                    ? new
+                    {
+                        f.LatestVersion.Id,
+                        f.LatestVersion.VersionNumber,
+                        f.LatestVersion.UploadedByName,
+                        f.LatestVersion.UploadedAt,
+                        Files = f.LatestVersion.Files
+                            .OrderBy(vf => vf.Id)
+                            .Select(vf => new { vf.Id, vf.OriginalFileName, vf.FileSize, vf.FileExt })
+                            .ToList()
+                    }
                     : null
             })
             .ToListAsync();
@@ -895,7 +905,7 @@ public class ProjectController : ControllerBase
     }
 
     [HttpPost("{id:long}/file-items/{itemId:long}/upload")]
-    public async Task<IActionResult> UploadFileItem(long id, long itemId, IFormFile file, [FromForm] string? remark, CancellationToken cancellationToken)
+    public async Task<IActionResult> UploadFileItem(long id, long itemId, List<IFormFile> files, [FromForm] string? remark, CancellationToken cancellationToken)
     {
         var (userId, realName) = GetUserInfo();
         var project = await _db.Projects.AsNoTracking().FirstOrDefaultAsync(p => p.Id == id);
@@ -910,50 +920,79 @@ public class ProjectController : ControllerBase
         if (!isProjectManager && !isAssignee)
             return Forbid();
 
-        // 保存物理文件
-        var ext = Path.GetExtension(file.FileName);
-        var fileName = $"{Guid.NewGuid():N}{ext}";
-        var relativeDir = Path.Combine("ProjectFiles", id.ToString());
-        var uploadDir = Path.Combine(_env.ContentRootPath, relativeDir);
-        Directory.CreateDirectory(uploadDir);
-        var filePath = Path.Combine(uploadDir, fileName);
-        using (var stream = new FileStream(filePath, FileMode.Create))
-        {
-            await file.CopyToAsync(stream, cancellationToken);
-        }
+        if (files == null || files.Count == 0)
+            return Ok(new { code = 400, message = "请选择至少一个文件" });
 
         // 查询最大版本号
         var maxVersion = await _db.ProjectFileVersions
             .Where(v => v.ProjectFileItemId == itemId)
             .MaxAsync(v => (int?)v.VersionNumber) ?? 0;
 
+        // 创建版本记录
         var version = new ProjectFileVersion
         {
             ProjectFileItemId = itemId,
             VersionNumber = maxVersion + 1,
-            FilePath = $"{relativeDir}/{fileName}",
-            OriginalFileName = file.FileName,
-            FileSize = file.Length,
-            FileExt = ext,
             UploadedBy = userId,
             UploadedByName = realName,
             UploadedAt = DateTime.Now,
             Remark = remark
         };
         _db.ProjectFileVersions.Add(version);
+        await _db.SaveChangesAsync(); // 先保存以获取 version.Id
+
+        // 保存每个物理文件
+        var relativeDir = Path.Combine("ProjectFiles", id.ToString());
+        var uploadDir = Path.Combine(_env.ContentRootPath, relativeDir);
+        Directory.CreateDirectory(uploadDir);
+
+        var savedFiles = new List<object>();
+        var addedFiles = new List<ProjectFileVersionFile>();
+        foreach (var file in files)
+        {
+            var ext = Path.GetExtension(file.FileName);
+            var fileName = $"{Guid.NewGuid():N}{ext}";
+            var filePath = Path.Combine(uploadDir, fileName);
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await file.CopyToAsync(stream, cancellationToken);
+            }
+
+            var versionFile = new ProjectFileVersionFile
+            {
+                ProjectFileVersionId = version.Id,
+                FilePath = $"{relativeDir}/{fileName}",
+                OriginalFileName = file.FileName,
+                FileSize = file.Length,
+                FileExt = ext
+            };
+            _db.ProjectFileVersionFiles.Add(versionFile);
+            addedFiles.Add(versionFile);
+        }
         await _db.SaveChangesAsync();
+
+        // SaveChangesAsync 后 ID 由数据库生成，再从追踪实体读取
+        foreach (var vf in addedFiles)
+        {
+            savedFiles.Add(new
+            {
+                id = vf.Id,
+                originalFileName = vf.OriginalFileName,
+                fileSize = vf.FileSize,
+                fileExt = vf.FileExt
+            });
+        }
 
         // 更新 LatestVersionId
         item.LatestVersionId = version.Id;
         await _db.SaveChangesAsync();
 
-        await LogOp(id, "上传文件", $"上传文件「{item.FileName}」v{version.VersionNumber}");
+        await LogOp(id, "上传文件", $"上传文件「{item.FileName}」v{version.VersionNumber}（{files.Count}个文件）");
         return Ok(new { code = 0, message = "success", data = new
         {
             versionId = version.Id,
             versionNumber = version.VersionNumber,
-            fileSize = version.FileSize,
-            fileExt = version.FileExt,
+            files = savedFiles,
             uploadedByName = version.UploadedByName,
             uploadedAt = version.UploadedAt
         }});
@@ -961,7 +1000,7 @@ public class ProjectController : ControllerBase
 
     [HttpGet("{id:long}/file-items/{itemId:long}/download")]
     [AllowAnonymous]
-    public async Task<IActionResult> DownloadFileItem(long id, long itemId, [FromQuery] int? version)
+    public async Task<IActionResult> DownloadFileItem(long id, long itemId, [FromQuery] int? version, [FromQuery] long? fileId)
     {
         // 认证由 JwtBearer 中间件统一处理（OnMessageReceived 从 ?token= 提取）
         var (userId, _) = GetUserInfo();
@@ -981,27 +1020,53 @@ public class ProjectController : ControllerBase
         if (!CanViewFile(item.IsPublic, item.ViewRoles, item.AssigneeId, project, userId, memberIds, canViewPublic, canViewNonPublic))
             return Forbid();
 
+        // 如果指定了 fileId，直接下载该文件
+        if (fileId.HasValue)
+        {
+            var file = await _db.ProjectFileVersionFiles
+                .Include(f => f.Version)
+                .FirstOrDefaultAsync(f => f.Id == fileId.Value);
+            if (file == null) return Ok(new { code = 404, message = "文件不存在" });
+            if (file.Version.ProjectFileItemId != itemId) return Ok(new { code = 404, message = "文件不属于该文件项" });
+
+            var fileFullPath = Path.Combine(_env.ContentRootPath, file.FilePath);
+            if (!System.IO.File.Exists(fileFullPath))
+                return Ok(new { code = 404, message = "物理文件不存在" });
+
+            var fileStream = new FileStream(fileFullPath, FileMode.Open, FileAccess.Read);
+            var downloadName = !string.IsNullOrEmpty(file.OriginalFileName) ? file.OriginalFileName : item.FileName;
+            return File(fileStream, "application/octet-stream", downloadName);
+        }
+
+        // 未指定 fileId：查找指定版本
         ProjectFileVersion? fileVersion;
         if (version.HasValue)
         {
             fileVersion = await _db.ProjectFileVersions
+                .Include(v => v.Files)
                 .FirstOrDefaultAsync(v => v.ProjectFileItemId == itemId && v.VersionNumber == version.Value);
             if (fileVersion == null) return Ok(new { code = 404, message = "指定版本不存在" });
         }
         else
         {
             if (!item.LatestVersionId.HasValue) return Ok(new { code = 404, message = "文件尚未上传" });
-            fileVersion = await _db.ProjectFileVersions.FindAsync(item.LatestVersionId.Value);
+            fileVersion = await _db.ProjectFileVersions
+                .Include(v => v.Files)
+                .FirstOrDefaultAsync(v => v.Id == item.LatestVersionId.Value);
             if (fileVersion == null) return Ok(new { code = 404, message = "文件版本不存在" });
         }
 
-        var fullPath = Path.Combine(_env.ContentRootPath, fileVersion.FilePath);
+        // 取该版本第一个文件下载（兼容旧行为）
+        var firstFile = fileVersion.Files.OrderBy(f => f.Id).FirstOrDefault();
+        if (firstFile == null) return Ok(new { code = 404, message = "该版本没有文件" });
+
+        var fullPath = Path.Combine(_env.ContentRootPath, firstFile.FilePath);
         if (!System.IO.File.Exists(fullPath))
             return Ok(new { code = 404, message = "物理文件不存在" });
 
         var stream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
-        var downloadName = !string.IsNullOrEmpty(fileVersion.OriginalFileName) ? fileVersion.OriginalFileName : item.FileName;
-        return File(stream, "application/octet-stream", downloadName);
+        var name = !string.IsNullOrEmpty(firstFile.OriginalFileName) ? firstFile.OriginalFileName : item.FileName;
+        return File(stream, "application/octet-stream", name);
     }
 
     [HttpGet("{id:long}/file-items/{itemId:long}/versions")]
@@ -1028,8 +1093,18 @@ public class ProjectController : ControllerBase
             .OrderByDescending(v => v.VersionNumber)
             .Select(v => new
             {
-                v.Id, v.VersionNumber, v.FileSize, v.FileExt,
-                v.UploadedByName, v.UploadedAt, v.Remark
+                v.Id,
+                v.VersionNumber,
+                v.UploadedByName,
+                v.UploadedAt,
+                v.Remark,
+                Files = v.Files.OrderBy(f => f.Id).Select(f => new
+                {
+                    f.Id,
+                    f.OriginalFileName,
+                    f.FileSize,
+                    f.FileExt
+                }).ToList()
             })
             .ToListAsync();
 
@@ -1044,6 +1119,7 @@ public class ProjectController : ControllerBase
 
         var item = await _db.ProjectFileItems
             .Include(f => f.Versions)
+                .ThenInclude(v => v.Files)
             .FirstOrDefaultAsync(f => f.Id == itemId && f.ProjectId == id);
         if (item == null) return Ok(new { code = 404, message = "文件项不存在" });
 
@@ -1051,11 +1127,14 @@ public class ProjectController : ControllerBase
 
         if (item.Required)
         {
-            // 必填项：删除所有版本但保留清单项
+            // 必填项：删除所有版本及物理文件，但保留清单项
             foreach (var v in item.Versions)
             {
-                var fullPath = Path.Combine(_env.ContentRootPath, v.FilePath);
-                if (System.IO.File.Exists(fullPath)) System.IO.File.Delete(fullPath);
+                foreach (var vf in v.Files)
+                {
+                    var fullPath = Path.Combine(_env.ContentRootPath, vf.FilePath);
+                    if (System.IO.File.Exists(fullPath)) System.IO.File.Delete(fullPath);
+                }
             }
             _db.ProjectFileVersions.RemoveRange(item.Versions);
             item.LatestVersionId = null;
@@ -1065,8 +1144,11 @@ public class ProjectController : ControllerBase
             // 非必填项：删除清单项及其所有版本
             foreach (var v in item.Versions)
             {
-                var fullPath = Path.Combine(_env.ContentRootPath, v.FilePath);
-                if (System.IO.File.Exists(fullPath)) System.IO.File.Delete(fullPath);
+                foreach (var vf in v.Files)
+                {
+                    var fullPath = Path.Combine(_env.ContentRootPath, vf.FilePath);
+                    if (System.IO.File.Exists(fullPath)) System.IO.File.Delete(fullPath);
+                }
             }
             // 分两步删除，避免 LatestVersionId+Versions 级联循环引用
             item.LatestVersionId = null;
@@ -1077,6 +1159,7 @@ public class ProjectController : ControllerBase
 
         var action = item.Required ? "清除文件版本" : "删除文件项";
         await LogOp(id, action, $"删除文件「{item.FileName}」{(versionCount > 0 ? $"(含{versionCount}个版本)" : "")}");
+
         return Ok(new { code = 0, message = "success" });
     }
 
@@ -1153,7 +1236,17 @@ public class ProjectController : ControllerBase
                 f.Remark,
                 VersionCount = f.Versions.Count,
                 LatestVersion = f.LatestVersion != null
-                    ? new { f.LatestVersion.Id, f.LatestVersion.VersionNumber, f.LatestVersion.FileSize, f.LatestVersion.FileExt, f.LatestVersion.UploadedByName, f.LatestVersion.UploadedAt }
+                    ? new
+                    {
+                        f.LatestVersion.Id,
+                        f.LatestVersion.VersionNumber,
+                        f.LatestVersion.UploadedByName,
+                        f.LatestVersion.UploadedAt,
+                        Files = f.LatestVersion.Files
+                            .OrderBy(vf => vf.Id)
+                            .Select(vf => new { vf.Id, vf.OriginalFileName, vf.FileSize, vf.FileExt })
+                            .ToList()
+                    }
                     : null
             })
             .ToListAsync();

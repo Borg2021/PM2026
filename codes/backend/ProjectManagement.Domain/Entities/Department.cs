@@ -7,4 +7,5 @@ public class Department
     public long? ParentId { get; set; }
     public int SortOrder { get; set; }
     public ICollection<User> Users { get; set; } = new List<User>();
+    public ICollection<DepartmentLeader> Leaders { get; set; } = new List<DepartmentLeader>();
 }

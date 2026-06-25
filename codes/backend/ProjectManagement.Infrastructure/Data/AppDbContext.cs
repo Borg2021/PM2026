@@ -9,6 +9,7 @@ public class AppDbContext : DbContext
 
     public DbSet<User> Users => Set<User>();
     public DbSet<Department> Departments => Set<Department>();
+    public DbSet<DepartmentLeader> DepartmentLeaders => Set<DepartmentLeader>();
     public DbSet<RoleDict> RoleDicts => Set<RoleDict>();
     public DbSet<Template> Templates => Set<Template>();
     public DbSet<PlanNode> PlanNodes => Set<PlanNode>();
@@ -41,6 +42,7 @@ public class AppDbContext : DbContext
     public DbSet<ProjectManagement.Domain.Entities.Function> Functions => Set<ProjectManagement.Domain.Entities.Function>();
     public DbSet<ProjectFileItem> ProjectFileItems => Set<ProjectFileItem>();
     public DbSet<ProjectFileVersion> ProjectFileVersions => Set<ProjectFileVersion>();
+    public DbSet<ProjectFileVersionFile> ProjectFileVersionFiles => Set<ProjectFileVersionFile>();
     public DbSet<UserFunction> UserFunctions => Set<UserFunction>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -100,6 +102,28 @@ public class AppDbContext : DbContext
                 .WithOne(uf => uf.User)
                 .HasForeignKey(uf => uf.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<Department>(e =>
+        {
+            e.HasMany(d => d.Leaders)
+                .WithOne(l => l.Department)
+                .HasForeignKey(l => l.DepartmentId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(d => d.ParentId);
+        });
+
+        modelBuilder.Entity<DepartmentLeader>(e =>
+        {
+            e.ToTable("DepartmentLeaders");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.DepartmentId);
+            e.HasIndex(x => x.UserId);
+            e.HasIndex(x => new { x.DepartmentId, x.UserId }).IsUnique();
+            e.HasOne(x => x.User)
+                .WithMany()
+                .HasForeignKey(x => x.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         modelBuilder.Entity<PlanBundle>(e =>
@@ -253,9 +277,20 @@ public class AppDbContext : DbContext
         {
             e.ToTable("ProjectFileVersions");
             e.HasKey(x => x.Id);
-            e.Property(x => x.FilePath).IsRequired().HasMaxLength(500);
             e.HasIndex(x => x.ProjectFileItemId);
             e.HasIndex(x => new { x.ProjectFileItemId, x.VersionNumber }).IsUnique();
+        });
+
+        modelBuilder.Entity<ProjectFileVersionFile>(e =>
+        {
+            e.ToTable("ProjectFileVersionFiles");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.FilePath).IsRequired().HasMaxLength(500);
+            e.HasOne(x => x.Version)
+                .WithMany(v => v.Files)
+                .HasForeignKey(x => x.ProjectFileVersionId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => x.ProjectFileVersionId);
         });
     }
 }

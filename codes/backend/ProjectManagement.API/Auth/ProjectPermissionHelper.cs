@@ -65,6 +65,36 @@ public static class ProjectPermissionHelper
             return true;
         if (await IsProjectMemberAsync(db, projectId, userId)) return true;
 
+        // 部门负责人可见性：若用户是某部门负责人，且项目中有成员属于该部门（含子部门），则可查看
+        var leaderDeptIds = await db.DepartmentLeaders
+            .Where(l => l.UserId == userId)
+            .Select(l => l.DepartmentId)
+            .Distinct()
+            .ToListAsync();
+        if (leaderDeptIds.Count > 0)
+        {
+            var allDepts = await db.Departments.AsNoTracking()
+                .Select(d => new { d.Id, d.ParentId }).ToListAsync();
+            var fullIds = new HashSet<long>(leaderDeptIds);
+            void Collect(long pid)
+            {
+                foreach (var d in allDepts.Where(d => d.ParentId == pid))
+                { if (fullIds.Add(d.Id)) Collect(d.Id); }
+            }
+            foreach (var id in leaderDeptIds) Collect(id);
+
+            var memberIds = await db.ProjectMembers
+                .Where(m => m.ProjectId == projectId && m.MemberId != null)
+                .Select(m => m.MemberId!.Value)
+                .ToListAsync();
+            if (memberIds.Count > 0)
+            {
+                var hasMemberInDept = await db.Users
+                    .AnyAsync(u => memberIds.Contains(u.Id) && u.DepartmentId != null && fullIds.Contains(u.DepartmentId.Value));
+                if (hasMemberInDept) return true;
+            }
+        }
+
         var scopeFilter = await ProjectDataScopeResolver.BuildListFilterAsync(db, userId);
         var hasListOrDetail = CanViewProjectList(codes) || CanViewProjectDetail(codes);
 

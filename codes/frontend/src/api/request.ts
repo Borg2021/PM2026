@@ -52,6 +52,10 @@ request.interceptors.response.use(
           }
         }
       }
+    } else if (error.code === 'ECONNABORTED' && error.message?.includes('timeout')) {
+      const match = error.message.match(/timeout of (\d+)ms/)
+      const sec = match ? Math.round(parseInt(match[1]) / 1000) : '?'
+      msg = `请求超时（超过 ${sec} 秒未响应），请检查网络或稍后重试`
     } else if (error.message) {
       msg = error.message
     }

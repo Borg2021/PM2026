@@ -2,7 +2,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { buildDeptTree, type DeptTreeNode } from '@/utils/deptTree'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getSystemUsers, createSystemUser, updateSystemUser, resetUserPassword, deleteSystemUser, getDepartmentList, getRbacRoles, getUserRoles, updateUserRoles, getFunctionList } from '@/api/system'
+import { getSystemUsers, createSystemUser, updateSystemUser, resetUserPassword, deleteSystemUser, getDepartmentList, getRbacRoles, getUserRoles, updateUserRoles, getFunctionList, searchUsers, updateDepartment } from '@/api/system'
 import type { SystemUser, DepartmentItem, RbacRole, FunctionItem } from '@/types/system'
 
 const tableData = ref<SystemUser[]>([])
@@ -59,6 +59,18 @@ function formatDate(dateStr: string): string {
 
 /* ──── 部门树选中 ──── */
 const selectedDeptId = ref<number | null>(null)
+
+/** 当前选中部门信息 */
+const currentDeptInfo = computed(() => {
+  if (!selectedDeptId.value) return null
+  return deptOptions.value.find(d => d.id === selectedDeptId.value) || null
+})
+
+/* ──── 部门负责人 ──── */
+const leaderDialogVisible = ref(false)
+const leaderDialogLoading = ref(false)
+const leaderSearchResults = ref<{ id: number; realName: string; username: string; departmentName: string | null }[]>([])
+const leaderSelectedIds = ref<number[]>([])
 
 /** 递归收集部门节点及其所有后代 ID */
 function collectDeptIds(node: DeptTreeNode): number[] {
@@ -148,6 +160,49 @@ const createRules = {
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
   realName: [{ required: true, message: '请输入姓名', trigger: 'blur' }]
+}
+
+/* ──── 设置部门负责人 ──── */
+function handleSetLeader() {
+  if (!selectedDeptId.value) return
+  const dept = currentDeptInfo.value
+  leaderSelectedIds.value = dept?.leaders?.map(l => l.userId) ?? []
+  // 将当前负责人预填到搜索结果中，确保 el-select 能显示姓名而非编号
+  leaderSearchResults.value = (dept?.leaders ?? []).map(l => ({
+    id: l.userId,
+    realName: l.realName,
+    username: '',
+    departmentName: null as string | null
+  }))
+  leaderDialogVisible.value = true
+}
+
+async function handleLeaderSearch(query: string) {
+  const kw = query.trim()
+  if (!kw) { leaderSearchResults.value = []; return }
+  leaderDialogLoading.value = true
+  try {
+    const res = await searchUsers(kw)
+    leaderSearchResults.value = res.data ?? []
+  } catch { leaderSearchResults.value = [] }
+  finally { leaderDialogLoading.value = false }
+}
+
+async function handleLeaderConfirm() {
+  if (!selectedDeptId.value) return
+  const dept = currentDeptInfo.value
+  if (!dept) return
+  try {
+    await updateDepartment(selectedDeptId.value, {
+      name: dept.name,
+      parentId: dept.parentId,
+      sortOrder: dept.sortOrder,
+      leaderIds: leaderSelectedIds.value
+    })
+    ElMessage.success('负责人设置成功')
+    leaderDialogVisible.value = false
+    await getDepartmentList().then(res => { deptOptions.value = res.data })
+  } catch { /* 错误由拦截器处理 */ }
 }
 
 function handleCreate() {
@@ -337,8 +392,16 @@ onMounted(() => {
           <div class="toolbar-info">
             当前部门：
             <strong>{{ selectedDeptId ? deptOptions.find(d => d.id === selectedDeptId)?.name || '未知' : '全部部门' }}</strong>
+            <template v-if="currentDeptInfo?.leaders?.length">
+              <span style="margin-left: 12px; color: #909399;">|</span>
+              <span style="margin-left: 12px;">负责人：</span>
+              <el-tag v-for="l in currentDeptInfo!.leaders" :key="l.userId" type="warning" size="small" style="margin-right: 4px;">{{ l.realName }}</el-tag>
+            </template>
           </div>
-          <el-button type="danger" @click="handleCreate">+ 新建用户</el-button>
+          <div style="display: flex; gap: 8px;">
+            <el-button v-if="selectedDeptId" @click="handleSetLeader">设置负责人</el-button>
+            <el-button type="danger" @click="handleCreate">+ 新建用户</el-button>
+          </div>
         </div>
 
         <!-- 表格 -->
@@ -530,12 +593,50 @@ onMounted(() => {
         <el-button type="danger" @click="submitResetPwd">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- 设置部门负责人对话框 -->
+    <el-dialog
+      v-model="leaderDialogVisible"
+      title="设置部门负责人（多选）"
+      width="500px"
+      :close-on-click-modal="false"
+    >
+      <div style="margin-bottom: 12px; color: #606266;">
+        当前部门：<strong>{{ currentDeptInfo?.name }}</strong>
+      </div>
+      <el-select
+        v-model="leaderSelectedIds"
+        multiple
+        filterable
+        remote
+        reserve-keyword
+        placeholder="搜索用户（姓名 / 用户名）"
+        :remote-method="handleLeaderSearch"
+        :loading="leaderDialogLoading"
+        style="width: 100%"
+      >
+        <el-option
+          v-for="u in leaderSearchResults"
+          :key="u.id"
+          :label="u.username ? `${u.realName} (${u.username})` : u.realName"
+          :value="u.id"
+        />
+      </el-select>
+      <template #footer>
+        <el-button @click="leaderDialogVisible = false">取消</el-button>
+        <el-button type="danger" @click="handleLeaderConfirm">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
 .page-container {
   padding: 24px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .page-container h2 {
   margin: 0 0 20px;
@@ -548,6 +649,9 @@ onMounted(() => {
   display: flex;
   gap: 16px;
   align-items: flex-start;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
 }
 
 /* 左侧部门树 */
@@ -555,6 +659,10 @@ onMounted(() => {
   width: 312px;
   min-width: 312px;
   flex-shrink: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .dept-tree-card :deep(.el-card__header) {
   padding: 10px 16px;
@@ -571,8 +679,9 @@ onMounted(() => {
   color: #303133;
 }
 .dept-tree-wrapper {
-  overflow: auto;
-  max-height: calc(100vh - 280px);
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 .dept-tree-wrapper :deep(.el-tree-node__content) {
   height: 36px;
@@ -606,6 +715,10 @@ onMounted(() => {
 .user-content {
   flex: 1;
   min-width: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .search-card {
   margin-bottom: 16px;
@@ -624,11 +737,44 @@ onMounted(() => {
   color: #303133;
 }
 .table-card {
-  margin-bottom: 16px;
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin-bottom: 0;
+}
+.table-card :deep(.el-card__body) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+/* 让 el-table 撑满卡片内部，表头固定 + body 滚动 */
+.table-card :deep(.el-table) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.table-card :deep(.el-table__inner-wrapper) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.table-card :deep(.el-table__header-wrapper) {
+  flex-shrink: 0;
+}
+.table-card :deep(.el-table__body-wrapper) {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 .pagination-wrapper {
   display: flex;
   justify-content: flex-end;
-  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid #ebeef5;
 }
 </style>

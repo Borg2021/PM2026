@@ -24,17 +24,22 @@ export function deleteSystemUser(id: number) {
   return request.delete<ApiResponse<null>>(`/system/users/${id}`)
 }
 
+/** 搜索用户（用于选择部门负责人等场景） */
+export function searchUsers(keyword: string) {
+  return request.get<ApiResponse<{ id: number; realName: string; username: string; departmentId: number | null; departmentName: string | null }[]>>('/users/search', { params: { keyword } })
+}
+
 /* ---- 部门管理 ---- */
 
 export function getDepartmentList() {
   return request.get<ApiResponse<DepartmentItem[]>>('/system/departments')
 }
 
-export function createDepartment(data: { name: string; parentId?: number | null; sortOrder: number }) {
+export function createDepartment(data: { name: string; parentId?: number | null; sortOrder: number; leaderIds?: number[] }) {
   return request.post<ApiResponse<{ id: number }>>('/system/departments', data)
 }
 
-export function updateDepartment(id: number, data: { name: string; parentId?: number | null; sortOrder: number }) {
+export function updateDepartment(id: number, data: { name: string; parentId?: number | null; sortOrder: number; leaderIds?: number[] }) {
   return request.put<ApiResponse<null>>(`/system/departments/${id}`, data)
 }
 

@@ -143,6 +143,10 @@ onMounted(() => { fetchData() })
 <style scoped>
 .page-container {
   padding: 24px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 .page-container h2 {
   margin: 0 0 20px;
@@ -155,5 +159,26 @@ onMounted(() => { fetchData() })
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+}
+/* 让 el-table 撑满剩余空间，表头固定 + body 滚动 */
+.page-container :deep(.el-table) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.page-container :deep(.el-table__inner-wrapper) {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.page-container :deep(.el-table__header-wrapper) {
+  flex-shrink: 0;
+}
+.page-container :deep(.el-table__body-wrapper) {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
 }
 </style>

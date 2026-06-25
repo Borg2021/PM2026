@@ -42,6 +42,9 @@ public static class ProjectDataScopeResolver
             ? await GetDeptAndChildrenIdsAsync(db, user?.DepartmentId)
             : Array.Empty<long>();
 
+        // 计算用户担任负责人的部门及其所有子孙部门
+        var leaderDeptIds = await GetLeaderDeptTreeIdsAsync(db, userId);
+
         return new ProjectListScopeFilter
         {
             UserId = userId,
@@ -49,6 +52,7 @@ public static class ProjectDataScopeResolver
             UserDeptId = user?.DepartmentId,
             UserDeptName = deptName,
             AllowedDeptIds = allowedDeptIds,
+            LeaderDeptIds = leaderDeptIds,
             HideSuspended = !hasProjectManager
         };
     }
@@ -130,5 +134,29 @@ public static class ProjectDataScopeResolver
         }
         Collect(rootDeptId.Value);
         return result;
+    }
+
+    /// <summary>获取用户担任负责人的部门及其所有子孙部门 ID</summary>
+    private static async Task<List<long>> GetLeaderDeptTreeIdsAsync(AppDbContext db, long userId)
+    {
+        var leaderDeptIds = await db.DepartmentLeaders
+            .Where(l => l.UserId == userId)
+            .Select(l => l.DepartmentId)
+            .Distinct()
+            .ToListAsync();
+        if (leaderDeptIds.Count == 0) return new List<long>();
+
+        var allDepts = await db.Departments.AsNoTracking()
+            .Select(d => new { d.Id, d.ParentId }).ToListAsync();
+        var result = new HashSet<long>(leaderDeptIds);
+        void Collect(long parentId)
+        {
+            foreach (var d in allDepts.Where(d => d.ParentId == parentId))
+            {
+                if (result.Add(d.Id)) Collect(d.Id);
+            }
+        }
+        foreach (var rootId in leaderDeptIds) Collect(rootId);
+        return result.ToList();
     }
 }

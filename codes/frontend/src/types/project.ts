@@ -182,16 +182,23 @@ export interface ProjectDetail extends Project {
 /** ViewRoles 可选值 */
 export type FileViewRole = 'pm' | 'member' | 'assignee'
 
+/** 版本下的单个文件 */
+export interface ProjectFileVersionFile {
+  id: number
+  originalFileName: string
+  fileSize: number
+  fileExt?: string
+}
+
 /** 文件版本信息 */
 export interface ProjectFileVersion {
   id: number
   versionNumber: number
-  fileSize: number
-  fileExt?: string
   uploadedBy: number
   uploadedByName: string
   uploadedAt: string
   remark?: string
+  files?: ProjectFileVersionFile[]
 }
 
 /** 文件清单项 */
@@ -209,7 +216,7 @@ export interface ProjectFileItem {
   deptName?: string
   planFinishDate?: string
   planFinishStatus?: 'normal' | 'expiring' | 'overdue' | null
-  latestVersion?: Pick<ProjectFileVersion, 'id' | 'versionNumber' | 'fileSize' | 'fileExt' | 'uploadedByName' | 'uploadedAt'>
+  latestVersion?: Pick<ProjectFileVersion, 'id' | 'versionNumber' | 'files' | 'uploadedByName' | 'uploadedAt'>
   versionCount: number
   remark?: string
 }

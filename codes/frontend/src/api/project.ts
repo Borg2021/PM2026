@@ -207,15 +207,14 @@ export function saveProjectFileItems(projectId: number, items: Partial<ProjectFi
   return request.put<ApiResponse<null>>(`/projects/${projectId}/file-items`, { items })
 }
 
-export function uploadProjectFileItem(projectId: number, itemId: number, file: File, remark?: string, onProgress?: (pct: number) => void) {
+export function uploadProjectFileItem(projectId: number, itemId: number, files: File[], remark?: string, onProgress?: (pct: number) => void) {
   const formData = new FormData()
-  formData.append('file', file)
+  files.forEach(f => formData.append('files', f))
   if (remark) formData.append('remark', remark)
   return request.post<ApiResponse<{
     versionId: number
     versionNumber: number
-    fileSize: number
-    fileExt: string
+    files: { id: number; originalFileName: string; fileSize: number; fileExt: string }[]
     uploadedByName: string
     uploadedAt: string
   }>>(`/projects/${projectId}/file-items/${itemId}/upload`, formData, {
@@ -233,10 +232,11 @@ export function getProjectFileVersions(projectId: number, itemId: number) {
   return request.get<ApiResponse<ProjectFileVersion[]>>(`/projects/${projectId}/file-items/${itemId}/versions`)
 }
 
-export function getFileDownloadUrl(projectId: number, itemId: number, version?: number) {
+export function getFileDownloadUrl(projectId: number, itemId: number, version?: number, fileId?: number) {
   const token = localStorage.getItem('token') || ''
   let url = `/api/v1/projects/${projectId}/file-items/${itemId}/download?token=${token}`
   if (version) url += `&version=${version}`
+  if (fileId) url += `&fileId=${fileId}`
   return url
 }
 
