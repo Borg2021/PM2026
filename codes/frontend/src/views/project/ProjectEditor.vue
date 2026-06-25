@@ -1647,10 +1647,6 @@ async function renumberSubtree(rootId: number) {
   }
 }
 
-function newTaskForm(): ProjectTaskItem {
-  return { parentId: null, taskNo: '', wbsCode: '', taskName: '', nodeType: 1, taskCategory: '', sortOrder: tasks.value.length + 1, status: 0, priority: 3, deliverableCnt: 0, progressPct: 0, remark: '' }
-}
-
 /**
  * 右键插入/新增同级任务
  * @param before true=在当前任务之前插入，false=之后新增
@@ -1777,6 +1773,11 @@ async function saveListEdits(): Promise<boolean> {
       const row = tasks.value.find(t => t.id === id)
       if (!row || !projectId.value) continue
       applyInlineCalc(row)
+      // 计划日期交叉校验
+      if (row.planStartDate && row.planFinishDate && row.planFinishDate.slice(0, 10) < row.planStartDate.slice(0, 10)) {
+        ElMessage.warning(`任务「${row.taskName}」计划完成时间不能早于计划开始时间，已跳过`)
+        continue
+      }
       // 根据前置任务约束调整当前任务的计划日期（仅前推不拉回）
       if (row.preTaskCodes) {
         const calcStart = calcStartForTaskGlobal(row, allMap)
@@ -2588,7 +2589,6 @@ interface GanttFlatItem {
   displayStatus: number
   actualDisplayStatus: number
 }
-const taskIdMap = computed(() => new Map(tasks.value.filter(t => t.id).map(t => [t.id!, t] as [number, ProjectTaskItem])))
 
 const ganttFlattenedTasks = computed<GanttFlatItem[]>(() => {
   const result: GanttFlatItem[] = []

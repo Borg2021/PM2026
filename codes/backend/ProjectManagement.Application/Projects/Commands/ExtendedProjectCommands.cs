@@ -144,6 +144,13 @@ public class UpdateProjectTaskHandler : IRequestHandler<UpdateProjectTaskCommand
             req.Input.PlanFinishDate = existing.PlanFinishDate;
         }
 
+        // 计划日期校验
+        if (req.Input.NodeType == 2 && req.Input.PlanFinishDate.HasValue)
+            req.Input.PlanStartDate = req.Input.PlanFinishDate; // 里程碑：开始=完成
+        if (req.Input.PlanStartDate.HasValue && req.Input.PlanFinishDate.HasValue
+            && req.Input.PlanFinishDate.Value < req.Input.PlanStartDate.Value)
+            throw new InvalidOperationException("计划完成时间不能早于计划开始时间");
+
         // 直接使用前端传来的 TaskNo（前端负责维护正确的编号）
         // 不在后端重新计算，避免多任务并发保存时序号冲突
         existing.ParentId = req.Input.ParentId;
