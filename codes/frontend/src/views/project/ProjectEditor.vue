@@ -11,7 +11,7 @@ import {
 } from '@/api/project'
 import { getDepartments, searchUsers, getDictByType, getTemplateList, getTemplateDetail } from '@/api/template'
 import { getSysParamByKey, getFunctionList } from '@/api/system'
-import { formatPreTaskCodes, parsePreTaskCodes } from '@/utils/preTaskHelpers'
+import { formatPreTaskCodes, parsePreTaskCodes, serializePreTaskCodes } from '@/utils/preTaskHelpers'
 import { buildDeptTree } from '@/utils/deptTree'
 import { taskStatusOptions, taskPriorityOptions, overdueStatus, statusLabel as taskStatusLabel, priorityLabel } from '@/utils/taskConstants'
 import ProjectFileTab from './components/ProjectFileTab.vue'
