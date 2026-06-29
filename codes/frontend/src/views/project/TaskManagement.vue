@@ -188,7 +188,35 @@ async function scrollToTask(taskId: number) {
   container.scrollTop = Math.max(0, offset - centerOffset)
 
   flashingTaskId.value = taskId
-  setTimeout(() => { flashingTaskId.value = null }, 3000)
+  // 清除所有旧高亮
+  el.querySelectorAll('td[data-flash]').forEach(td => {
+    td.style.removeProperty('background')
+    td.removeAttribute('data-flash')
+  })
+  const HIGHLIGHT = 'rgba(64, 158, 255, 0.25)'
+  // JS inline !important 击败 Element Plus 固定列 background:inherit
+  targetRow.querySelectorAll('td').forEach(td => {
+    td.setAttribute('data-flash', '')
+    td.style.setProperty('background', HIGHLIGHT, 'important')
+  })
+  // 同时标记固定列表格中对应行的 <td>（Element Plus 固定列在独立 <table> 中）
+  const fixedWrappers = el.querySelectorAll<HTMLElement>('.el-table__fixed-right, .el-table__fixed-left')
+  fixedWrappers.forEach(w => {
+    const fixedRows = w.querySelectorAll<HTMLElement>('tr.el-table__row')
+    if (fixedRows[pageIdx]) {
+      fixedRows[pageIdx].querySelectorAll('td').forEach(td => {
+        td.setAttribute('data-flash', '')
+        td.style.setProperty('background', HIGHLIGHT, 'important')
+      })
+    }
+  })
+  setTimeout(() => {
+    flashingTaskId.value = null
+    el.querySelectorAll('td[data-flash]').forEach(td => {
+      td.style.removeProperty('background')
+      td.removeAttribute('data-flash')
+    })
+  }, 3000)
 }
 
 /** 表格行 class：闪动高亮 */
@@ -1046,6 +1074,9 @@ onMounted(async () => {
 }
 </style>
 <style>
+td[data-flash] .cell { background: transparent !important; }
+td[data-flash]::before,
+td[data-flash]::after { background: transparent !important; }
 .pre-task-popover-wrap {
   padding: 8px 0 !important;
 }

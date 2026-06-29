@@ -893,10 +893,26 @@ async function scrollToTaskRow(taskId: number) {
   const centerOffset = scrollWrap.clientHeight / 2 - targetRow.offsetHeight / 2
   scrollWrap.scrollTop = Math.max(0, offset - centerOffset)
 
-  // 高亮闪 3 下
+  // 高亮闪烁：JS inline !important 击败 scoped CSS !important
   if (_ft) clearTimeout(_ft)
+  // 清除所有旧高亮
+  el.querySelectorAll('td[data-flash]').forEach(td => {
+    td.style.removeProperty('background')
+    td.removeAttribute('data-flash')
+  })
   flashId.value = taskId
-  _ft = window.setTimeout(() => { flashId.value = null }, 3000)
+  const HIGHLIGHT = '#fce4ec'
+  targetRow.querySelectorAll('td').forEach(td => {
+    td.setAttribute('data-flash', '')
+    td.style.setProperty('background', HIGHLIGHT, 'important')
+  })
+  _ft = window.setTimeout(() => {
+    flashId.value = null
+    el.querySelectorAll('td[data-flash]').forEach(td => {
+      td.style.removeProperty('background')
+      td.removeAttribute('data-flash')
+    })
+  }, 3000)
 }
 /* ─────────────────────────────────────── */
 const showAddTaskDialog = ref(false)
@@ -5116,4 +5132,9 @@ onMounted(async () => {
   flex-shrink: 0; font-size: 12px; color: #e74c3c; background: #fff2f0; border-radius: 4px; padding: 1px 6px; font-weight: 600;
 }
 :deep(.el-table__row.pf td) { background-color: #fce4ec; transition: background-color 0.6s; }
+</style>
+<style>
+td[data-flash] .cell { background: transparent !important; }
+td[data-flash]::before,
+td[data-flash]::after { background: transparent !important; }
 </style>
