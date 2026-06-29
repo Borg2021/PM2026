@@ -881,10 +881,26 @@ async function scrollToTaskRow(taskId: number) {
   const centerOffset = scrollWrap.clientHeight / 2 - targetRow.offsetHeight / 2
   scrollWrap.scrollTop = Math.max(0, offset - centerOffset)
 
-  // 高亮闪 3 下
+  // 高亮闪烁：JS inline !important 击败 scoped CSS !important
   if (_ft) clearTimeout(_ft)
+  // 清除所有旧高亮
+  el.querySelectorAll('td[data-flash]').forEach(td => {
+    td.style.removeProperty('background')
+    td.removeAttribute('data-flash')
+  })
   flashId.value = taskId
-  _ft = window.setTimeout(() => { flashId.value = null }, 3000)
+  const HIGHLIGHT = '#fce4ec'
+  targetRow.querySelectorAll('td').forEach(td => {
+    td.setAttribute('data-flash', '')
+    td.style.setProperty('background', HIGHLIGHT, 'important')
+  })
+  _ft = window.setTimeout(() => {
+    flashId.value = null
+    el.querySelectorAll('td[data-flash]').forEach(td => {
+      td.style.removeProperty('background')
+      td.removeAttribute('data-flash')
+    })
+  }, 3000)
 }
 /* ─────────────────────────────────────── */
 const showAddTaskDialog = ref(false)
@@ -5234,4 +5250,9 @@ onMounted(async () => {
 :deep(.el-table__body-wrapper tr:hover td.col-taskname) { background-color: #f5f7fa !important; }
 /* 序号列防止树缩进导致换行 */
 :deep(td.col-index .cell) { white-space: nowrap !important; }
+</style>
+<style>
+td[data-flash] .cell { background: transparent !important; }
+td[data-flash]::before,
+td[data-flash]::after { background: transparent !important; }
 </style>
