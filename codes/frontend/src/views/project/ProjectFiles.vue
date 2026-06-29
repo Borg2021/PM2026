@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { reactive, ref, computed, watch, onMounted } from 'vue'
-import { getMyFiles, getFileDownloadUrl, uploadProjectFileItem, getProjectFileVersions } from '@/api/project'
+import { getMyFiles, getFileDownloadUrl, uploadProjectFileItem, getProjectFileVersions, resetProjectFileItem } from '@/api/project'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { openProjectView } from '@/utils/projectNav'
+import { useAuthStore } from '@/store/auth'
 
 interface MyFileItem {
   id: number
@@ -24,6 +25,9 @@ interface MyFileItem {
   versionCount: number
   remark: string | null
 }
+
+const authStore = useAuthStore()
+const isAdmin = computed(() => authStore.role === 'admin')
 
 const loading = ref(false)
 const files = ref<MyFileItem[]>([])
@@ -191,6 +195,20 @@ async function handleUpload(item: MyFileItem) {
   input.click()
 }
 
+/* ───────── 文件重置 ───────── */
+async function handleFileReset(item: MyFileItem) {
+  try {
+    await ElMessageBox.confirm(
+      `确定要将「${item.fileName}」重置为待上传状态吗？历史版本记录将保留。`,
+      '确认重置',
+      { confirmButtonText: '重置', cancelButtonText: '取消', type: 'warning' }
+    )
+    await resetProjectFileItem(item.projectId, item.id)
+    ElMessage.success('重置成功')
+    await loadData()
+  } catch { /* 取消或错误 */ }
+}
+
 /* ───────── 版本历史 ───────── */
 async function openVersionDialog(item: MyFileItem) {
   versionDialogTitle.value = `版本历史 · ${item.fileName}`
@@ -331,7 +349,7 @@ onMounted(loadData)
           </template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="120" show-overflow-tooltip />
-        <el-table-column label="操作" width="170" fixed="right" align="center">
+        <el-table-column label="操作" width="200" fixed="right" align="center">
           <template #default="{ row }">
             <el-button size="small" type="primary" link :loading="uploadingItemId === row.id"
               @click="handleUpload(row)">
@@ -339,6 +357,7 @@ onMounted(loadData)
             </el-button>
             <el-button v-if="row.hasUpload" size="small" type="primary" link @click="handleDownload(row)">下载</el-button>
             <el-button v-if="row.hasUpload && row.versionCount > 1" size="small" type="primary" link @click="openVersionDialog(row)">版本</el-button>
+            <el-button v-if="isAdmin && row.hasUpload" size="small" type="warning" link @click="handleFileReset(row)">重置</el-button>
           </template>
         </el-table-column>
       </el-table>

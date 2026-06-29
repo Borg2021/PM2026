@@ -228,6 +228,10 @@ export function deleteProjectFileItem(projectId: number, itemId: number) {
   return request.delete<ApiResponse<null>>(`/projects/${projectId}/file-items/${itemId}`)
 }
 
+export function resetProjectFileItem(projectId: number, itemId: number) {
+  return request.post<ApiResponse<null>>(`/projects/${projectId}/file-items/${itemId}/reset`)
+}
+
 export function getProjectFileVersions(projectId: number, itemId: number) {
   return request.get<ApiResponse<ProjectFileVersion[]>>(`/projects/${projectId}/file-items/${itemId}/versions`)
 }

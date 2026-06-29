@@ -4,7 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/store/auth'
 import {
   getProjectFileItems, saveProjectFileItems, uploadProjectFileItem,
-  deleteProjectFileItem, getProjectFileVersions, getFileDownloadUrl
+  deleteProjectFileItem, resetProjectFileItem, getProjectFileVersions, getFileDownloadUrl
 } from '@/api/project'
 import { getTemplateList, getTemplateDetail, searchUsers, getDepartments } from '@/api/template'
 import { buildDeptTree } from '@/utils/deptTree'
@@ -31,6 +31,7 @@ const permissions = computed(() => authStore.permissions)
 const canViewPublic = computed(() => permissions.value.includes('project:file:view:public'))
 const canViewNonPublic = computed(() => permissions.value.includes('project:file:view:nonpublic'))
 const isPm = computed(() => authStore.userId === props.projectManagerId)
+const isAdmin = computed(() => authStore.role === 'admin')
 
 /* ───────── 数据 ───────── */
 const loading = ref(false)
@@ -363,6 +364,21 @@ async function handleDelete(item: any) {
   } catch { /* 取消或错误 */ }
 }
 
+/* ───────── 重置 ───────── */
+async function handleReset(item: any) {
+  if (!item.id) return
+  try {
+    await ElMessageBox.confirm(
+      `确定要将「${item.fileName}」重置为待上传状态吗？历史版本记录将保留。`,
+      '确认重置',
+      { confirmButtonText: '重置', cancelButtonText: '取消', type: 'warning' }
+    )
+    await resetProjectFileItem(props.projectId, item.id!)
+    ElMessage.success('重置成功')
+    await loadData()
+  } catch { /* 取消或错误 */ }
+}
+
 /* ───────── 责任人选择器 ───────── */
 function onAssigneeSearch(query: string) {
   return users.value.filter(u =>
@@ -579,7 +595,7 @@ function getPlanFinishStatus(item: any): { text: string; cls: string } {
         </template>
       </el-table-column>
 
-      <el-table-column label="操作" width="150" fixed="right">
+      <el-table-column label="操作" width="180" fixed="right">
         <template #default="{ row }">
           <el-button v-if="canUploadFile(row)" size="small" type="primary" link :loading="uploadingItemId === row.id"
             @click="handleUpload(row)">
@@ -587,6 +603,7 @@ function getPlanFinishStatus(item: any): { text: string; cls: string } {
           </el-button>
           <el-button v-if="canDownload(row)" size="small" type="primary" link @click="handleDownload(row)">下载</el-button>
           <el-button v-if="canViewFile(row) && row.versionCount > 1" size="small" type="primary" link @click="openVersionDialog(row)">版本</el-button>
+          <el-button v-if="isAdmin && row.hasUpload" size="small" type="warning" link @click="handleReset(row)">重置</el-button>
           <el-button v-if="!readonly && (!row.required || !row.latestVersion)" size="small" type="danger" link @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>

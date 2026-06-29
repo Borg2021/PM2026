@@ -1163,6 +1163,32 @@ public class ProjectController : ControllerBase
         return Ok(new { code = 0, message = "success" });
     }
 
+    // ────────── 文件资料：重置状态 ──────────
+
+    [HttpPost("{id:long}/file-items/{itemId:long}/reset")]
+    public async Task<IActionResult> ResetFileItem(long id, long itemId)
+    {
+        var (userId, _) = GetUserInfo();
+
+        // 仅系统管理员可重置
+        if (!await ProjectPermissionHelper.IsAdminAsync(_db, userId))
+            return Forbid();
+
+        var item = await _db.ProjectFileItems
+            .FirstOrDefaultAsync(f => f.Id == itemId && f.ProjectId == id);
+        if (item == null) return Ok(new { code = 404, message = "文件项不存在" });
+
+        if (!item.LatestVersionId.HasValue)
+            return Ok(new { code = 400, message = "文件项状态为待上传，无需重置" });
+
+        item.LatestVersionId = null;
+        await _db.SaveChangesAsync();
+
+        await LogOp(id, "文件管理", $"重置文件「{item.FileName}」状态为待上传");
+
+        return Ok(new { code = 0, message = "success" });
+    }
+
     // ────────── 操作日志 ──────────
 
     [HttpGet("{id:long}/operation-logs")]
