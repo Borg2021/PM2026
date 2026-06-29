@@ -1266,18 +1266,19 @@ function syncParentPlanDates() {
     } else {
       parent.status = 0
     }
+    // 计划工期 = 父节点自身日期跨度（日历天数），而非子节点工期之和
+    if (parent.planStartDate && parent.planFinishDate) {
+      const planDays = Math.round((new Date(parent.planFinishDate).getTime() - new Date(parent.planStartDate).getTime()) / (1000 * 60 * 60 * 24))
+      parent.planDuration = planDays >= 0 ? planDays : 0
+    }
+    // 实际工期 = 父节点自身日期跨度
+    if (parent.actualStartDate && parent.actualFinishDate) {
+      const actualDays = Math.round((new Date(parent.actualFinishDate).getTime() - new Date(parent.actualStartDate).getTime()) / (1000 * 60 * 60 * 24))
+      parent.actualDuration = actualDays >= 0 ? actualDays : 0
+    }
     const children = tasks.value.filter(t => t.parentId === pid)
-    // 计划工期 = 所有直接子节点计划工期之和
-    const totalDuration = children.reduce((sum, c) => sum + (c.planDuration || 0), 0)
-    if (parent.planDuration !== totalDuration) {
-      parent.planDuration = totalDuration
-    }
-    // 实际工期 = 所有直接子节点实际工期之和
-    const totalActual = children.reduce((sum, c) => sum + (c.actualDuration || 0), 0)
-    if (parent.actualDuration !== totalActual) {
-      parent.actualDuration = totalActual
-    }
     // 进度 = 子节点计划工期加权平均
+    const totalDuration = children.reduce((sum, c) => sum + (c.planDuration || 0), 0)
     const weightedPct = children.reduce((sum, c) => sum + (c.planDuration || 0) * (c.progressPct || 0), 0)
     if (totalDuration > 0) {
       const avg = Math.round(weightedPct / totalDuration)
@@ -2440,6 +2441,20 @@ const boardData = computed(() => {
 const changeTabRef = ref<InstanceType<typeof ProjectChangeTab> | null>(null)
 const financeTabRef = ref<InstanceType<typeof ProjectFinanceTab> | null>(null)
 
+/* ───────── 甘特图虚拟起止节点 ───────── */
+const VIRTUAL_START_ID = -1
+const VIRTUAL_END_ID = -2
+
+function makeVirtualTask(id: number, taskNo: string, taskName: string, planDate: string): ProjectTaskItem {
+  return {
+    id, taskNo, taskName, wbsCode: '', nodeType: 2, sortOrder: 0,
+    status: 2, priority: 3, planStartDate: planDate, planFinishDate: planDate,
+    deliverableCnt: 0, progressPct: 100, children: [],
+  }
+}
+function isVirtualTask(id?: number) { return id === VIRTUAL_START_ID || id === VIRTUAL_END_ID }
+function isLeafTask(task: ProjectTaskItem) { return !(task.children && task.children.length > 0) }
+
 /* ───────── 甘特图 ───────── */
 const ganttViewMode = ref<'day' | 'week'>('day')
 const ganttUnitWidth = computed(() => ganttViewMode.value === 'week' ? 56 : 28)
@@ -2683,6 +2698,51 @@ const ganttFlattenedTasks = computed<GanttFlatItem[]>(() => {
       parent.actualBarWidth = childRight - parent.actualBarLeft
     }
   }
+
+  // ── 插入虚拟起止节点 ──
+  if (result.length > 0 && timelineStart) {
+    // 收集叶子任务中有效日期的 planStartDate 最早值
+    const leafTasks = result.filter(item => isLeafTask(item.task) && item.task.planStartDate)
+    const startDateStr = leafTasks.length > 0
+      ? leafTasks.reduce((min, item) => item.task.planStartDate! < min ? item.task.planStartDate! : min, leafTasks[0].task.planStartDate!)
+      : null
+
+    // 收集被引用任务 ID（出度计算）
+    const referencedIds = new Set<number>()
+    for (const item of result) {
+      if (!item.task.preTaskCodes) continue
+      for (const p of parsePreTaskCodes(item.task.preTaskCodes)) {
+        referencedIds.add(p.taskId)
+      }
+    }
+    // 无后继叶子：叶子任务中 ID 不在被引用集合中的
+    const noSuccessorLeafs = leafTasks.filter(item => {
+      const id = item.task.id
+      return id && !referencedIds.has(id)
+    })
+    const endDateStr = noSuccessorLeafs.length > 0
+      ? noSuccessorLeafs.reduce((max, item) => {
+          const d = item.task.planFinishDate || item.task.planStartDate!
+          return d > max ? d : max
+        }, noSuccessorLeafs[0].task.planFinishDate || noSuccessorLeafs[0].task.planStartDate!)
+      : (leafTasks.length > 0 ? leafTasks[leafTasks.length - 1].task.planFinishDate || leafTasks[leafTasks.length - 1].task.planStartDate! : null)
+
+    if (startDateStr) {
+      const startDate = parseDate(startDateStr)!
+      const startBarLeft = calcLeft(startDate)
+      const startTask = makeVirtualTask(VIRTUAL_START_ID, '开始', '项目开始', startDateStr)
+      result.unshift({ task: startTask, level: 0, index: 0, barLeft: startBarLeft, barWidth: 0, actualBarLeft: startBarLeft, actualBarWidth: 0, displayStatus: 2, actualDisplayStatus: 2 })
+    }
+    if (endDateStr) {
+      const endDate = parseDate(endDateStr)!
+      const endBarLeft = calcLeft(endDate)
+      const endTask = makeVirtualTask(VIRTUAL_END_ID, '结束', '项目结束', endDateStr)
+      result.push({ task: endTask, level: 0, index: 0, barLeft: endBarLeft, barWidth: 0, actualBarLeft: endBarLeft, actualBarWidth: 0, displayStatus: 2, actualDisplayStatus: 2 })
+    }
+    // 全局重新编号
+    result.forEach((item, i) => { item.index = i })
+  }
+
   return result
 })
 
@@ -2691,6 +2751,7 @@ const GANTT_ROW_H = 54
 const GANTT_PLAN_BAR_TOP = 6
 const GANTT_PLAN_BAR_H  = 17
 const GANTT_LINE_Y_OFFSET = GANTT_PLAN_BAR_TOP + Math.round(GANTT_PLAN_BAR_H / 2)
+const GANTT_VIRTUAL_LINE_Y  = Math.round(GANTT_ROW_H / 2)  // Start/End 线/点与左侧文本居中对齐
 
 /**
  * 构建 FS（Finish→Start）依赖连线路径
@@ -2802,20 +2863,48 @@ const ganttDependencyLines = computed<{ path: string }[]>(() => {
   for (const item of flat) {
     if (item.task.id) map.set(item.task.id, item)
   }
+  // 构建被引用任务 ID 集合（出度判断）
+  const referencedIds = new Set<number>()
   for (const item of flat) {
+    if (!item.task.preTaskCodes || isVirtualTask(item.task.id)) continue
+    for (const p of parsePreTaskCodes(item.task.preTaskCodes)) {
+      referencedIds.add(p.taskId)
+    }
+  }
+  const startItem = flat.find(it => it.task.id === VIRTUAL_START_ID)
+  const endItem = flat.find(it => it.task.id === VIRTUAL_END_ID)
+
+  for (const item of flat) {
+    if (isVirtualTask(item.task.id)) continue
     const preCodes = item.task.preTaskCodes
-    if (!preCodes) continue
-    const codes = preCodes.split(',').map(c => c.trim()).filter(Boolean)
-    for (const code of codes) {
-      const idMatch = code.match(/^(\d+)/)
-      if (!idMatch) continue
-      const pred = map.get(parseInt(idMatch[1], 10))
-      if (!pred || !item.task.planStartDate || !pred.task.planStartDate) continue
-      // FS 依赖：从前置任务右侧出发
-      const x1 = pred.barLeft + pred.barWidth
+    if (preCodes) {
+      const codes = preCodes.split(',').map(c => c.trim()).filter(Boolean)
+      for (const code of codes) {
+        const idMatch = code.match(/^(\d+)/)
+        if (!idMatch) continue
+        const pred = map.get(parseInt(idMatch[1], 10))
+        if (!pred || !item.task.planStartDate || !pred.task.planStartDate) continue
+        const x1 = pred.barLeft + pred.barWidth
+        const x2 = item.barLeft
+        const y1 = pred.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+        const y2 = item.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+        lines.push({ path: buildDepPath(x1, y1, x2, y2) })
+      }
+    }
+    // Start → 无前置叶子任务
+    if (!preCodes && startItem && isLeafTask(item.task) && item.task.planStartDate) {
+      const x1 = startItem.barLeft + startItem.barWidth
       const x2 = item.barLeft
-      const y1 = pred.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+      const y1 = startItem.index * GANTT_ROW_H + GANTT_VIRTUAL_LINE_Y
       const y2 = item.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+      lines.push({ path: buildDepPath(x1, y1, x2, y2) })
+    }
+    // 无后继叶子 → End
+    if (endItem && isLeafTask(item.task) && item.task.id && !referencedIds.has(item.task.id) && item.task.planStartDate) {
+      const x1 = item.barLeft + item.barWidth
+      const x2 = endItem.barLeft
+      const y1 = item.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+      const y2 = endItem.index * GANTT_ROW_H + GANTT_VIRTUAL_LINE_Y
       lines.push({ path: buildDepPath(x1, y1, x2, y2) })
     }
   }
@@ -2848,14 +2937,15 @@ const criticalPathData = computed<{ taskNos: Set<number> }>(() => {
   }
 
   // 构建拓扑排序所需的结构
-  // 只对叶子任务（无子节点）运行 CPM，排除父/汇总任务带来的干扰
-  // 同时排除已完成任务，已完成不再影响工期
+  // 只对叶子任务运行 CPM，排除父/汇总任务 + 已完成任务（调度已固化的不再参与）
   const taskMap = new Map<number, GanttFlatItem>()
   for (const item of flat) {
-    if (item.task.id && !(item.task.children && item.task.children.length > 0) && item.task.status !== 2)
+    if (item.task.id && isLeafTask(item.task) && item.task.status !== 2)
       taskMap.set(item.task.id, item)
   }
+  if (taskMap.size === 0) return empty
 
+  // 构建依赖图和入度
   const succMap = new Map<number, { id: number; lagDays: number }[]>()
   const inDeg   = new Map<number, number>()
   for (const [id] of taskMap) { succMap.set(id, []); inDeg.set(id, 0) }
@@ -2868,9 +2958,48 @@ const criticalPathData = computed<{ taskNos: Set<number> }>(() => {
     }
   }
 
+  // ── 引入 Start / End 虚拟节点（单源单汇）──
+  const startItem = flat.find(it => it.task.id === VIRTUAL_START_ID)
+  const endItem = flat.find(it => it.task.id === VIRTUAL_END_ID)
+  let startNodeId = VIRTUAL_START_ID
+  let endNodeId = VIRTUAL_END_ID
+  if (startItem) {
+    succMap.set(startNodeId, [])
+    inDeg.set(startNodeId, 0)
+    // Start → 所有无前置叶子任务
+    for (const [id, item] of taskMap) {
+      const hasPre = item.task.preTaskCodes && parsePreTaskCodes(item.task.preTaskCodes).some(p => taskMap.has(p.taskId))
+      if (!hasPre) {
+        succMap.get(startNodeId)!.push({ id, lagDays: 0 })
+        inDeg.set(id, (inDeg.get(id) ?? 0) + 1)
+      }
+    }
+  }
+  if (endItem) {
+    succMap.set(endNodeId, [])
+    inDeg.set(endNodeId, 0)
+    // 收集被引用任务 ID（本 CPM 范围内的）
+    const cpmReferenced = new Set<number>()
+    for (const [, item] of taskMap) {
+      if (!item.task.preTaskCodes) continue
+      for (const p of parsePreTaskCodes(item.task.preTaskCodes)) {
+        if (taskMap.has(p.taskId)) cpmReferenced.add(p.taskId)
+      }
+    }
+    // 所有无后继叶子 → End
+    for (const [id] of taskMap) {
+      if (cpmReferenced.has(id)) continue
+      succMap.get(id)!.push({ id: endNodeId, lagDays: 0 })
+      inDeg.set(endNodeId, (inDeg.get(endNodeId) ?? 0) + 1)
+    }
+  }
+
   // 拓扑排序（Kahn 算法）
   const topo: number[] = []
-  const q = [...inDeg.entries()].filter(([, d]) => d === 0).map(([n]) => n)
+  const q: number[] = []
+  for (const [n, d] of inDeg) {
+    if (d === 0) q.push(n)
+  }
   const deg2 = new Map(inDeg)
   while (q.length) {
     const cur = q.shift()!; topo.push(cur)
@@ -2880,77 +3009,106 @@ const criticalPathData = computed<{ taskNos: Set<number> }>(() => {
     }
   }
 
-  // 前向传递：ES / EF（日偏移量）
+  // 前向传递：ES / EF（日偏移量，以 earliest 为日期 0 基准）
   const es = new Map<number, number>()
   const ef = new Map<number, number>()
+
+  // Start 节点：ES=EF=0
+  if (startItem) {
+    es.set(startNodeId, 0)
+    ef.set(startNodeId, 0)
+  }
+
   for (const no of topo) {
+    if (no === startNodeId || no === endNodeId) continue
     const item = taskMap.get(no); if (!item) continue
-    // planFinishDate 是最后工作日（含），+1 转为排他性结束天，避免相邻任务产生 1 天浮动导致关键路径断裂
+    // planFinishDate 是最后工作日（含），+1 转为排他性结束天
     const dur = Math.max(1, toDay(item.task.planFinishDate) - toDay(item.task.planStartDate) + 1)
-    // 教科书 CPM 前向传递：
-    //   没有前置任务 → ES = 0（项目开始）
-    //   有前置任务   → ES = MAX(所有前置任务的 EF + lag)
-    // （计划日期间的空档不计入，以免产生虚假浮动）
-    const knownPreds = item.task.preTaskCodes
-      ? parsePreTaskCodes(item.task.preTaskCodes).filter(p => taskMap.has(p.taskId))
-      : []
+    // ES = max(所有前置.EF + lag)；Start 已通过 succMap 连接，统一处理
     let esVal = 0
-    for (const p of knownPreds) {
-      const constraint = (ef.get(p.taskId) ?? 0) + (p.lagDays ?? 0)
-      if (constraint > esVal) esVal = constraint
+    if (startItem && es.has(startNodeId)) {
+      // 遍历所有可能的前置节点
+      for (const [predId, preds] of succMap) {
+        for (const s of preds) {
+          if (s.id === no) {
+            const constraint = (ef.get(predId) ?? 0) + s.lagDays
+            if (constraint > esVal) esVal = constraint
+          }
+        }
+      }
+    }
+    // 同时检查原始 preTaskCodes 中的延迟（补充 lag 不为 0 的精确约束）
+    if (item.task.preTaskCodes) {
+      for (const p of parsePreTaskCodes(item.task.preTaskCodes)) {
+        if (!taskMap.has(p.taskId) && (!startItem || p.taskId !== startNodeId)) continue
+        const constraint = (ef.get(p.taskId) ?? 0) + (p.lagDays ?? 0)
+        if (constraint > esVal) esVal = constraint
+      }
     }
     es.set(no, esVal); ef.set(no, esVal + dur)
   }
 
-  const projectEnd = Math.max(0, ...[...ef.values()])
+  // End.ES = max(所有无后继叶子.EF), End.EF = End.ES
+  if (endItem) {
+    let endES = 0
+    for (const [id] of taskMap) {
+      const val = ef.get(id)
+      if (val !== undefined && val > endES) endES = val
+    }
+    es.set(endNodeId, endES)
+    ef.set(endNodeId, endES)
+  }
+
+  const projectEnd = ef.get(endNodeId) ?? Math.max(0, ...[...ef.values()])
 
   // 后向传递：LF / LS
   const lf = new Map<number, number>()
   const ls = new Map<number, number>()
-  for (const no of topo) lf.set(no, projectEnd) // 初始化全部为项目结束
+  for (const no of topo) lf.set(no, projectEnd)
+
+  // End 的 LS=LF=projectEnd
+  if (endItem) {
+    lf.set(endNodeId, projectEnd)
+    ls.set(endNodeId, projectEnd)
+  }
 
   for (const no of [...topo].reverse()) {
-    const item = taskMap.get(no); if (!item) continue
-    const dur = (ef.get(no) ?? 0) - (es.get(no) ?? 0)
+    if (no === endNodeId) continue
+    const item = taskMap.get(no)
+    const dur = item ? (ef.get(no) ?? 0) - (es.get(no) ?? 0) : 0
     const lfVal = lf.get(no) ?? projectEnd
     ls.set(no, lfVal - dur)
     // 反传到前置任务
-    if (item.task.preTaskCodes) {
-      for (const p of parsePreTaskCodes(item.task.preTaskCodes)) {
-        if (!taskMap.has(p.taskId)) continue
-        const constraint = (ls.get(no) ?? 0) - (p.lagDays ?? 0)
-        const oldLF = lf.get(p.taskId)
-        if (oldLF === undefined || constraint < oldLF) lf.set(p.taskId, constraint)
-      }
+    const preds: { taskId: number; lagDays: number }[] = []
+    if (item?.task.preTaskCodes) {
+      preds.push(...parsePreTaskCodes(item.task.preTaskCodes).filter(p => taskMap.has(p.taskId)))
+    }
+    // Start 也是前置
+    if (startItem) {
+      const hasRealPre = item?.task.preTaskCodes && parsePreTaskCodes(item.task.preTaskCodes).some(p => taskMap.has(p.taskId))
+      if (!hasRealPre && item) preds.push({ taskId: startNodeId, lagDays: 0 })
+    }
+    for (const p of preds) {
+      if (!taskMap.has(p.taskId) && p.taskId !== startNodeId) continue
+      const constraint = (ls.get(no) ?? 0) - (p.lagDays ?? 0)
+      const oldLF = lf.get(p.taskId)
+      if (oldLF === undefined || constraint < oldLF) lf.set(p.taskId, constraint)
     }
   }
 
-  // 总时差 = LS - ES ≈ 0 → 关键任务
+  // Start 的 LS/LF 最终确定（来自后向传递的结果）
+  if (startItem) {
+    const startLF = lf.get(startNodeId)
+    if (startLF !== undefined) ls.set(startNodeId, startLF)
+  }
+
+  // 总时差 = LS - ES ≤ 0 → 关键任务（排除虚拟节点）
   const taskNos = new Set<number>()
   for (const [no, esVal] of es) {
+    if (no === startNodeId || no === endNodeId) continue
     const lsVal = ls.get(no) ?? 0
     if (lsVal - esVal <= 0) taskNos.add(no)
   }
-  // DEBUG: 输出每个任务的 CPM 计算数据
-  const debugRows: { taskNo: string; taskName: string; ES: number; EF: number; LS: number; LF: number; float: number; critical: boolean; status: number }[] = []
-  for (const [no, esVal] of es) {
-    const item = taskMap.get(no)
-    const lsVal = ls.get(no) ?? 0
-    const lfVal = lf.get(no) ?? 0
-    const efVal = ef.get(no) ?? 0
-    debugRows.push({
-      taskNo: no,
-      taskName: item?.task.taskName ?? '',
-      ES: esVal,
-      EF: efVal,
-      LS: lsVal,
-      LF: lfVal,
-      float: lsVal - esVal,
-      critical: lsVal - esVal <= 0,
-      status: item?.task.status ?? -1
-    })
-  }
-  debugRows.sort((a, b) => a.ES - b.ES || a.taskNo - b.taskNo)
   return { taskNos }
 })
 
@@ -2964,6 +3122,23 @@ const criticalPathLines = computed<{ path: string }[]>(() => {
   for (const item of flat) { if (item.task.id) map.set(item.task.id, item) }
 
   const lines: { path: string }[] = []
+  const startItem = flat.find(it => it.task.id === VIRTUAL_START_ID)
+  const endItem   = flat.find(it => it.task.id === VIRTUAL_END_ID)
+
+  // 收集已被关键前置引用的关键任务（用于找"第一个关键任务"和"最后一个关键任务"）
+  const hasCriticalPred = new Set<number>()
+  for (const item of flat) {
+    if (!item.task.id || !item.task.preTaskCodes) continue
+    if (!taskNos.has(item.task.id)) continue
+    for (const code of item.task.preTaskCodes.split(',').map(c => c.trim()).filter(Boolean)) {
+      const idMatch = code.match(/^(\d+)/)
+      if (!idMatch) continue
+      const predId = parseInt(idMatch[1], 10)
+      if (taskNos.has(predId)) hasCriticalPred.add(item.task.id)
+    }
+  }
+
+  // 普通关键连线
   for (const item of flat) {
     if (!item.task.id || !item.task.preTaskCodes) continue
     if (!taskNos.has(item.task.id)) continue
@@ -2981,6 +3156,49 @@ const criticalPathLines = computed<{ path: string }[]>(() => {
       lines.push({ path: buildDepPath(x1, y1, x2, y2) })
     }
   }
+
+  // Start → 首个关键叶子任务（无关键前置的关键任务）
+  if (startItem) {
+    for (const item of flat) {
+      const id = item.task.id
+      if (!id || isVirtualTask(id)) continue
+      if (!taskNos.has(id)) continue
+      if (hasCriticalPred.has(id)) continue
+      if (!item.task.planStartDate) continue
+      const x1 = startItem.barLeft + startItem.barWidth
+      const x2 = item.barLeft
+      const y1 = startItem.index * GANTT_ROW_H + GANTT_VIRTUAL_LINE_Y
+      const y2 = item.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+      lines.push({ path: buildDepPath(x1, y1, x2, y2) })
+    }
+  }
+
+  // 最后一个关键叶子任务 → End（不被其他关键任务作为前置）
+  if (endItem) {
+    const criticalAsPred = new Set<number>()
+    for (const item of flat) {
+      if (!item.task.preTaskCodes) continue
+      for (const code of item.task.preTaskCodes.split(',').map(c => c.trim()).filter(Boolean)) {
+        const idMatch = code.match(/^(\d+)/)
+        if (!idMatch) continue
+        const pId = parseInt(idMatch[1], 10)
+        if (taskNos.has(pId)) criticalAsPred.add(pId)
+      }
+    }
+    for (const item of flat) {
+      const id = item.task.id
+      if (!id || isVirtualTask(id)) continue
+      if (!taskNos.has(id)) continue
+      if (criticalAsPred.has(id)) continue
+      if (!item.task.planStartDate) continue
+      const x1 = item.barLeft + item.barWidth
+      const x2 = endItem.barLeft
+      const y1 = item.index * GANTT_ROW_H + GANTT_LINE_Y_OFFSET
+      const y2 = endItem.index * GANTT_ROW_H + GANTT_VIRTUAL_LINE_Y
+      lines.push({ path: buildDepPath(x1, y1, x2, y2) })
+    }
+  }
+
   return lines
 })
 
@@ -3875,13 +4093,19 @@ onMounted(async () => {
                   <span class="gantt-header-name">任务名称</span>
                 </div>
                 <div class="gantt-left-body" ref="ganttLeftBodyRef" @scroll="syncGanttScrollFromLeft" :style="{ height: 'calc(100% - ' + (ganttViewMode === 'week' ? 81 : 54) + 'px)' }">
-                  <div v-for="item in ganttFlattenedTasks" :key="item.task.id ?? item.task.taskNo" class="gantt-row" :class="{ 'gantt-row-alt': item.index % 2 === 1 }">
-                    <span class="gantt-task-no" :style="{ width: ganttSeqWidth + 'px' }" :title="item.task.taskNo">{{ item.task.taskNo }}</span>
-                    <span class="gantt-task-name" :style="{ paddingLeft: (item.level * 20 + 8) + 'px' }" :title="item.task.taskName">
-                      <span class="gantt-task-icon" v-if="item.task.nodeType === 2" style="color:#e74c3c">◆</span>
-                      <span class="gantt-task-icon" v-else-if="item.task.children && item.task.children.length" style="color:#409eff">▼</span>
-                      <span class="gantt-task-icon" v-else style="color:#909399">·</span>
-                      {{ item.task.taskName }}
+                  <div v-for="item in ganttFlattenedTasks" :key="item.task.id ?? item.task.taskNo" class="gantt-row" :class="{ 'gantt-row-alt': item.index % 2 === 1, 'gantt-virtual-row': isVirtualTask(item.task.id) }">
+                    <span class="gantt-task-no" :class="{ 'gantt-virtual-no': isVirtualTask(item.task.id) }" :style="{ width: ganttSeqWidth + 'px' }" :title="item.task.taskNo">{{ item.task.taskNo }}</span>
+                    <span class="gantt-task-name" :class="{ 'gantt-virtual-name': isVirtualTask(item.task.id) }" :style="{ paddingLeft: (item.level * 20 + 8) + 'px' }" :title="item.task.taskName">
+                      <template v-if="item.task.id === VIRTUAL_START_ID || item.task.id === VIRTUAL_END_ID">
+                        <span class="gantt-task-icon">◆</span>
+                        {{ item.task.taskName }}
+                      </template>
+                      <template v-else>
+                        <span class="gantt-task-icon" v-if="item.task.nodeType === 2" style="color:#e74c3c">◆</span>
+                        <span class="gantt-task-icon" v-else-if="item.task.children && item.task.children.length" style="color:#409eff">▼</span>
+                        <span class="gantt-task-icon" v-else style="color:#909399">·</span>
+                        {{ item.task.taskName }}
+                      </template>
                     </span>
                   </div>
                 </div>
@@ -3917,25 +4141,37 @@ onMounted(async () => {
                     <div class="gantt-today-line" v-if="ganttTodayOffset >= 0" :style="{ left: ganttTodayOffset + 'px' }">
                       <div class="gantt-today-label">今日</div>
                     </div>
-                    <div v-for="item in ganttFlattenedTasks" :key="item.task.id ?? item.task.taskNo" class="gantt-row" :class="{ 'gantt-row-alt': item.index % 2 === 1 }">
-                      <div v-if="item.task.nodeType === 2 && item.task.planStartDate" class="gantt-milestone" :style="{ left: item.barLeft + 'px' }" :title="item.task.taskName + ': ' + (item.task.planStartDate?.slice(0,10) ?? '')"></div>
-                      <div v-else-if="item.task.nodeType === 1 && item.task.planStartDate && item.barWidth > 0"
-                           class="gantt-bar gantt-bar-plan" :class="'gantt-bar-status-' + item.displayStatus"
-                           :style="{ left: item.barLeft + 'px', width: item.barWidth + 'px' }"
-                           :title="'【计划】' + item.task.taskName + ' (' + (item.task.planStartDate?.slice(0,10) ?? '') + ' ~ ' + (item.task.planFinishDate?.slice(0,10) ?? '') + ')'"
-                           @dblclick="handleGanttBarDblClick(item.task)">
-                      </div>
-                      <div v-if="item.task.nodeType === 1 && item.task.planStartDate && item.actualBarWidth > 0"
-                           class="gantt-bar gantt-bar-actual" :class="'gantt-bar-status-' + item.actualDisplayStatus"
-                           :style="{ left: item.actualBarLeft + 'px', width: item.actualBarWidth + 'px' }"
-                           :title="'【实际】' + item.task.taskName + (item.task.actualStartDate ? ' (' + item.task.actualStartDate.slice(0,10) + (item.task.actualFinishDate ? ' ~ ' + item.task.actualFinishDate.slice(0,10) : ' ~ 进行中') + ')' : ' (同计划)')"
-                           @dblclick="handleGanttBarDblClick(item.task)">
-                        <div v-if="item.task.progressPct > 0" class="gantt-bar-progress" :style="{ width: item.task.progressPct + '%' }"></div>
-                      </div>
-                      <!-- 文字层：z-index 高于 SVG 前置线，始终显示在最上层 -->
-                      <span v-if="item.task.nodeType === 1 && item.task.planStartDate && item.barWidth > 60" class="gantt-bar-label" :style="{ left: item.barLeft + 'px', width: item.barWidth + 'px' }">{{ item.task.taskName }}</span>
-                      <span v-if="item.task.nodeType === 1 && item.task.planStartDate && item.actualBarWidth > 0 && item.task.progressPct > 0" class="gantt-bar-pct" :class="'gantt-pct-status-' + item.actualDisplayStatus" :style="{ left: (item.actualBarLeft - 8) + 'px', top: '30px', transform: 'translateX(-100%)' }">{{ item.task.progressPct }}%</span>
-                      <span v-if="item.task.nodeType === 1 && item.task.planStartDate && item.barWidth > 0 && (item.task.deptName || item.task.assigneeName)" class="gantt-bar-info" :style="{ left: (item.barLeft + item.barWidth + 18) + 'px' }"><span v-if="item.task.deptName" class="gantt-info-dept">{{ item.task.deptName }}</span><span v-if="item.task.assigneeName" class="gantt-info-person" style="margin-left:10px">{{ item.task.assigneeName }}</span></span>
+                    <div v-for="item in ganttFlattenedTasks" :key="item.task.id ?? item.task.taskNo" class="gantt-row" :class="{ 'gantt-row-alt': item.index % 2 === 1, 'gantt-virtual-row': isVirtualTask(item.task.id) }">
+                      <!-- 虚拟节点虚线 + 圆点 -->
+                      <template v-if="item.task.id === VIRTUAL_START_ID">
+                        <div class="gantt-virtual-line" :style="{ left: item.barLeft + 'px' }"></div>
+                        <div class="gantt-dot gantt-dot-start" :style="{ left: (item.barLeft - 4) + 'px' }" :title="'项目开始: ' + (item.task.planStartDate?.slice(0,10) ?? '')"></div>
+                      </template>
+                      <template v-else-if="item.task.id === VIRTUAL_END_ID">
+                        <div class="gantt-virtual-line" :style="{ left: item.barLeft + 'px' }"></div>
+                        <div class="gantt-dot gantt-dot-end" :style="{ left: (item.barLeft - 4) + 'px' }" :title="'项目结束: ' + (item.task.planStartDate?.slice(0,10) ?? '')"></div>
+                      </template>
+                      <!-- 普通任务 -->
+                      <template v-else>
+                        <div v-if="item.task.nodeType === 2 && item.task.planStartDate" class="gantt-milestone" :style="{ left: item.barLeft + 'px' }" :title="item.task.taskName + ': ' + (item.task.planStartDate?.slice(0,10) ?? '')"></div>
+                        <div v-else-if="item.task.nodeType === 1 && item.task.planStartDate && item.barWidth > 0"
+                             class="gantt-bar gantt-bar-plan" :class="'gantt-bar-status-' + item.displayStatus"
+                             :style="{ left: item.barLeft + 'px', width: item.barWidth + 'px' }"
+                             :title="'【计划】' + item.task.taskName + ' (' + (item.task.planStartDate?.slice(0,10) ?? '') + ' ~ ' + (item.task.planFinishDate?.slice(0,10) ?? '') + ')'"
+                             @dblclick="handleGanttBarDblClick(item.task)">
+                        </div>
+                        <div v-if="item.task.nodeType === 1 && item.task.planStartDate && item.actualBarWidth > 0"
+                             class="gantt-bar gantt-bar-actual" :class="'gantt-bar-status-' + item.actualDisplayStatus"
+                             :style="{ left: item.actualBarLeft + 'px', width: item.actualBarWidth + 'px' }"
+                             :title="'【实际】' + item.task.taskName + (item.task.actualStartDate ? ' (' + item.task.actualStartDate.slice(0,10) + (item.task.actualFinishDate ? ' ~ ' + item.task.actualFinishDate.slice(0,10) : ' ~ 进行中') + ')' : ' (同计划)')"
+                             @dblclick="handleGanttBarDblClick(item.task)">
+                          <div v-if="item.task.progressPct > 0" class="gantt-bar-progress" :style="{ width: item.task.progressPct + '%' }"></div>
+                        </div>
+                        <!-- 文字层 -->
+                        <span v-if="item.task.nodeType === 1 && item.task.planStartDate && item.barWidth > 60" class="gantt-bar-label" :style="{ left: item.barLeft + 'px', width: item.barWidth + 'px' }">{{ item.task.taskName }}</span>
+                        <span v-if="item.task.nodeType === 1 && item.task.planStartDate && item.actualBarWidth > 0 && item.task.progressPct > 0" class="gantt-bar-pct" :class="'gantt-pct-status-' + item.actualDisplayStatus" :style="{ left: (item.actualBarLeft - 8) + 'px', top: '30px', transform: 'translateX(-100%)' }">{{ item.task.progressPct }}%</span>
+                        <span v-if="item.task.nodeType === 1 && item.task.planStartDate && item.barWidth > 0 && (item.task.deptName || item.task.assigneeName)" class="gantt-bar-info" :style="{ left: (item.barLeft + item.barWidth + 18) + 'px' }"><span v-if="item.task.deptName" class="gantt-info-dept">{{ item.task.deptName }}</span><span v-if="item.task.assigneeName" class="gantt-info-person" style="margin-left:10px">{{ item.task.assigneeName }}</span></span>
+                      </template>
                     </div>
                   </div>
                 </div>
@@ -5063,6 +5299,28 @@ onMounted(async () => {
 
 .gantt-milestone:hover {
   transform: rotate(45deg) scale(1.2);
+}
+
+/* 虚拟起止节点圆点 */
+.gantt-dot {
+  position: absolute;
+  top: 23px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #333;
+  z-index: 20;
+}
+.gantt-dot-start { background: #333; }
+.gantt-dot-end { background: #fff; border: 2px solid #333; }
+.gantt-virtual-row { background: #fafafa; }
+.gantt-virtual-row .gantt-task-icon { color: #999 !important; }
+.gantt-virtual-no { color: #8c8c8c; font-style: italic; }
+.gantt-virtual-name { color: #8c8c8c; }
+.gantt-virtual-line {
+  position: absolute; top: 0; bottom: 0;
+  width: 1px;
+  border-left: 1px dashed #ccc;
+  pointer-events: none; z-index: 0;
 }
 
 .gantt-today-line {
