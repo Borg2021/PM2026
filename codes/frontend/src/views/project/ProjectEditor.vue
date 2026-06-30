@@ -4066,7 +4066,9 @@ onMounted(async () => {
         <el-card shadow="never" class="form-card">
           <template #header><span style="font-weight:600">考核任务列表</span></template>
           <el-table :data="assessmentTasks" border size="small" style="width:100%" max-height="calc(100vh - 350px)" empty-text="暂无考核任务数据">
-            <el-table-column type="index" label="序号" width="55" fixed="left" />
+            <el-table-column label="序号" width="55" fixed="left">
+              <template #default="{ row }">{{ row.taskNo }}</template>
+            </el-table-column>
             <el-table-column label="任务名称" min-width="316" prop="taskName" show-overflow-tooltip />
             <el-table-column label="进度" width="106" align="center">
               <template #default="{ row }">
