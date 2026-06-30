@@ -55,6 +55,7 @@ const departments = ref<Department[]>([])
 const functions = ref<FunctionItem[]>([])
 const users = ref<UserInfo[]>([])
 const taskNoRule = ref('')
+const showMilestoneTab = ref(true)  // 系统参数 is_milestone_show 控制
 
 /** 项目基本信息选人：按用户职能筛选（见 docs/业务逻辑.md） */
 const projectManagerOptions = ref<UserInfo[]>([])
@@ -3312,6 +3313,10 @@ onMounted(async () => {
     taskNoRule.value = ruleRes.data.paramValue
   } catch { /* 默认使用 3,2,2 */ }
   try {
+    const msRes = await getSysParamByKey('is_milestone_show')
+    showMilestoneTab.value = msRes.data.paramValue === '1'
+  } catch { showMilestoneTab.value = true /* 默认显示 */ }
+  try {
     const fnRes = await getFunctionList()
     functions.value = fnRes.data ?? []
     await loadStaffOptionsByFunction(functions.value)
@@ -4036,7 +4041,7 @@ onMounted(async () => {
       </el-tab-pane>
 
       <!-- ── Tab 4：里程碑 ── -->
-      <el-tab-pane label="里程碑" name="milestones" :disabled="!projectId">
+      <el-tab-pane v-if="showMilestoneTab" label="里程碑" name="milestones" :disabled="!projectId">
         <el-card shadow="never" class="form-card">
           <template #header><span style="font-weight:600">里程碑列表</span></template>
           <el-table :data="milestoneTasks" border size="small" style="width:100%" max-height="calc(100vh - 350px)" empty-text="暂无里程碑数据">
@@ -4129,7 +4134,7 @@ onMounted(async () => {
             <el-table-column label="参考工期" width="80" align="center">
               <template #default="{ row }">{{ row.referenceDuration }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="168" fixed="right">
+            <el-table-column label="操作" width="168" fixed="right" align="center">
               <template #default="{ row }">
                 <el-button link type="primary" size="small" @click="openViewTask(row)">查看</el-button>
                 <el-button v-if="!isReadonly" link type="primary" size="small" @click="openEditTask(row)">编辑</el-button>
