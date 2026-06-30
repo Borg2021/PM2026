@@ -3279,6 +3279,7 @@ async function onTabChange(tab: string) {
   if (!projectId.value) return
   if (tab === 'tasks' && tasks.value.length === 0) await loadTasks()
   if (tab === 'milestones' && tasks.value.length === 0) await loadTasks()
+  if (tab === 'assessment' && tasks.value.length === 0) await loadTasks()
   if (tab === 'board' && tasks.value.length === 0) await loadTasks()
   if (tab === 'gantt') await loadGanttData()
   if (tab === 'changes') await changeTabRef.value?.loadChanges()
