@@ -2353,6 +2353,16 @@ const assessmentTasks = computed(() => {
     .sort((a, b) => (a.taskNo || '').localeCompare(b.taskNo || '', undefined, { numeric: true }))
 })
 
+/** 考核任务序号列宽根据最长 taskNo 自动适配 */
+const assessmentTaskNoColWidth = computed(() => {
+  let maxLen = 0
+  for (const t of assessmentTasks.value) {
+    const s = t.taskNo || ''
+    if (s.length > maxLen) maxLen = s.length
+  }
+  return Math.max(60, maxLen * 10 + 48)
+})
+
 /** 序号列宽根据最长 taskNo 和树深度自动适配（树缩进 16px/层 + 展开图标 18px） */
 const taskNoColWidth = computed(() => {
   let maxLen = 0
@@ -4066,7 +4076,7 @@ onMounted(async () => {
         <el-card shadow="never" class="form-card">
           <template #header><span style="font-weight:600">考核任务列表</span></template>
           <el-table :data="assessmentTasks" border size="small" style="width:100%" max-height="calc(100vh - 350px)" empty-text="暂无考核任务数据">
-            <el-table-column label="序号" width="70" fixed="left">
+            <el-table-column label="序号" :width="assessmentTaskNoColWidth" fixed="left">
               <template #default="{ row }">{{ row.taskNo }}</template>
             </el-table-column>
             <el-table-column label="任务名称" min-width="316" prop="taskName" show-overflow-tooltip />
