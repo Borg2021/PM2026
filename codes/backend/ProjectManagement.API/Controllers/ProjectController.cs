@@ -262,6 +262,16 @@ public class ProjectController : ControllerBase
         var (userId, _) = GetUserInfo();
         if (!await ProjectDataScopeResolver.CanChangeProjectStatusAsync(_db, id, userId))
             return Forbid();
+
+        // 检查是否可强制完成：is_project_force_finish=1 跳过任务检查
+        var forceParam = await _db.SysParams.FirstOrDefaultAsync(p => p.ParamKey == "is_project_force_finish");
+        if (forceParam == null || forceParam.ParamValue != "1")
+        {
+            var hasUnfinished = await _db.ProjectTasks.AnyAsync(t => t.ProjectId == id && t.Status != 2);
+            if (hasUnfinished)
+                return Ok(new { code = 400, message = "该项目有未完成的任务，不能标记为完成" });
+        }
+
         var oldStatus = (await _repo.GetByIdAsync(id))?.Status ?? 0;
         await _mediator.Send(new ChangeProjectStatusCommand(id, 2, userId));
         await LogOp(id, "完成项目", $"将状态从「{StatusLabel(oldStatus)}」改为「已完成」");
@@ -300,7 +310,7 @@ public class ProjectController : ControllerBase
         var (userId, _) = GetUserInfo();
         var project = await _repo.GetByIdAsync(id);
         if (project == null) return Ok(new { code = 404, message = "项目不存在" });
-        if (project.Status != 1) return Ok(new { code = 400, message = "只有进行中的项目可以反激活" });
+        if (project.Status != 1 && project.Status != 2) return Ok(new { code = 400, message = "只有进行中或已完成的项目可以反激活" });
 
         // 仅系统管理员、项目管理员角色可取消激活（项目经理不可）
         if (!await ProjectDataScopeResolver.CanDeactivateProjectAsync(_db, id, userId))

@@ -198,6 +198,13 @@ public static class DbInitializer
             await db.SaveChangesAsync();
         }
 
+        // 确保项目强制完成参数存在
+        if (!db.SysParams.Any(p => p.ParamKey == "is_project_force_finish"))
+        {
+            db.SysParams.Add(new SysParam { ParamKey = "is_project_force_finish", ParamValue = "0", Description = "是否强制完成项目：1=可强制完成 0=需检查所有任务已完成" });
+            await db.SaveChangesAsync();
+        }
+
         // 确保 RBAC 权限存在（兼容已有数据库升级）
         if (!db.Permissions.Any())
         {
