@@ -678,6 +678,22 @@ async function handleResume() {
   await loadDetail()
 }
 
+async function handleReopenCompleted() {
+  if (!projectId.value) return
+  await ElMessageBox.confirm('确定要撤销完成吗？项目将恢复到进行中状态。', '提示', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' })
+  await activateProject(projectId.value)
+  ElMessage.success('项目已恢复到进行中')
+  await loadDetail()
+}
+
+async function handleDeactivateFromCompleted() {
+  if (!projectId.value) return
+  await ElMessageBox.confirm('确定要取消激活吗？已完成的项目将回到未激活状态。', '提示', { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' })
+  await deactivateProject(projectId.value)
+  ElMessage.success('项目已反激活')
+  await loadDetail()
+}
+
 function handleBack() {
   window.location.hash = '#/project/list'
 }
@@ -3353,6 +3369,8 @@ onMounted(async () => {
         <el-button v-if="form.status === 1" type="warning" :disabled="!form.canManageStatus" @click="handleSuspend">暂停</el-button>
         <el-button v-if="form.status === 1" type="info" :disabled="!form.canDeactivate" @click="handleDeactivate">取消激活</el-button>
         <el-button v-if="form.status === 3" type="primary" :disabled="!form.canManageStatus" @click="handleResume">取消暂停</el-button>
+        <el-button v-if="form.status === 2" type="warning" :disabled="!form.canManageStatus" @click="handleReopenCompleted">撤销完成</el-button>
+        <el-button v-if="form.status === 2" type="info" :disabled="!form.canDeactivate" @click="handleDeactivateFromCompleted">取消激活</el-button>
       </div>
     </div>
 
