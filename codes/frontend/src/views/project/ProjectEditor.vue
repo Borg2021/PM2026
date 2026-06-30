@@ -4088,12 +4088,6 @@ onMounted(async () => {
             <el-table-column label="计划工期" width="69" align="center">
               <template #default="{ row }">{{ row.planDuration }}</template>
             </el-table-column>
-            <el-table-column label="前置任务" width="165">
-              <template #default="{ row }">
-                <span v-if="row.preTaskCodes" class="pcell">{{ formatPreTaskCodes(row.preTaskCodes, taskIdMap) }}</span>
-                <span v-else>-</span>
-              </template>
-            </el-table-column>
             <el-table-column label="责任部门" width="130" prop="deptName" show-overflow-tooltip>
               <template #default="{ row }">{{ row.deptName || '-' }}</template>
             </el-table-column>
@@ -4121,9 +4115,6 @@ onMounted(async () => {
             </el-table-column>
             <el-table-column label="参考工期" width="80" align="center">
               <template #default="{ row }">{{ row.referenceDuration }}</template>
-            </el-table-column>
-            <el-table-column label="工序号" width="120" align="center" prop="wbsCode" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.wbsCode || '-' }}</template>
             </el-table-column>
             <el-table-column label="操作" width="120" fixed="right">
               <template #default="{ row }">
