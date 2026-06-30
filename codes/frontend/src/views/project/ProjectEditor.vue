@@ -4066,14 +4066,11 @@ onMounted(async () => {
         <el-card shadow="never" class="form-card">
           <template #header><span style="font-weight:600">考核任务列表</span></template>
           <el-table :data="assessmentTasks" border size="small" style="width:100%" max-height="calc(100vh - 350px)" empty-text="暂无考核任务数据">
-            <el-table-column type="index" label="序号" width="60" fixed="left" />
-            <el-table-column label="任务编号" width="180" prop="taskNo" />
-            <el-table-column label="任务名称" min-width="200" prop="taskName" show-overflow-tooltip />
-            <el-table-column label="状态" width="100" align="center">
+            <el-table-column type="index" label="序号" width="55" fixed="left" />
+            <el-table-column label="任务名称" min-width="316" prop="taskName" show-overflow-tooltip />
+            <el-table-column label="进度" width="106" align="center">
               <template #default="{ row }">
-                <el-tag :type="row.status === 2 ? 'success' : row.status === 1 ? 'primary' : 'info'" size="small">
-                  {{ row.status === 2 ? '已完成' : row.status === 1 ? '进行中' : '未开始' }}
-                </el-tag>
+                <el-progress :percentage="row.progressPct ?? 0" :status="row.progressPct >= 100 ? 'success' : ''" />
               </template>
             </el-table-column>
             <el-table-column label="计划开始" width="110" align="center">
@@ -4088,12 +4085,46 @@ onMounted(async () => {
             <el-table-column label="实际完成" width="110" align="center">
               <template #default="{ row }">{{ row.actualFinishDate?.slice(0, 10) ?? '-' }}</template>
             </el-table-column>
-            <el-table-column label="进度" width="100" align="center">
+            <el-table-column label="计划工期" width="69" align="center">
+              <template #default="{ row }">{{ row.planDuration }}</template>
+            </el-table-column>
+            <el-table-column label="前置任务" width="165">
               <template #default="{ row }">
-                <el-progress :percentage="row.progressPct ?? 0" :status="row.progressPct >= 100 ? 'success' : ''" />
+                <span v-if="row.preTaskCodes" class="pcell">{{ formatPreTaskCodes(row.preTaskCodes, taskIdMap) }}</span>
+                <span v-else>-</span>
               </template>
             </el-table-column>
-            <el-table-column label="责任人" width="120" prop="assigneeName" show-overflow-tooltip />
+            <el-table-column label="责任部门" width="130" prop="deptName" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.deptName || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="责任人" width="130" prop="assigneeName" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.assigneeName || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="优先级" width="80" align="center">
+              <template #default="{ row }">{{ priorityLabel(row.priority) }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag :type="taskStatusTag(row.status)" size="small">{{ taskStatusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="逾期状态" width="88" align="center">
+              <template #default="{ row }">
+                <el-tag :type="overdueStatus(row) === '已逾期' ? 'danger' : 'info'" size="small">{{ overdueStatus(row) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="任务类别" width="130" align="center">
+              <template #default="{ row }">{{ dictMap['task_category']?.find(d => d.dictCode === row.taskCategory)?.dictLabel ?? row.taskCategory }}</template>
+            </el-table-column>
+            <el-table-column label="实际工期" width="71" align="center">
+              <template #default="{ row }">{{ row.actualDuration }}</template>
+            </el-table-column>
+            <el-table-column label="参考工期" width="80" align="center">
+              <template #default="{ row }">{{ row.referenceDuration }}</template>
+            </el-table-column>
+            <el-table-column label="工序号" width="120" align="center" prop="wbsCode" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.wbsCode || '-' }}</template>
+            </el-table-column>
             <el-table-column label="操作" width="120" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" size="small" @click="openViewTask(row)">查看</el-button>
