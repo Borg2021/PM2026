@@ -56,6 +56,7 @@ const functions = ref<FunctionItem[]>([])
 const users = ref<UserInfo[]>([])
 const taskNoRule = ref('')
 const showMilestoneTab = ref(true)  // 系统参数 is_milestone_show 控制
+const tasksLoading = ref(false)  // 任务计划/里程碑/考核任务/任务列表首次加载
 
 /** 项目基本信息选人：按用户职能筛选（见 docs/业务逻辑.md） */
 const projectManagerOptions = ref<UserInfo[]>([])
@@ -2292,9 +2293,14 @@ function applyInlineCalc(row: ProjectTaskItem) {
 
 async function loadTasks() {
   if (!projectId.value) return
-  const res = await getProjectTasks(projectId.value)
-  tasks.value = res.data
-  syncParentPlanDates()
+  tasksLoading.value = true
+  try {
+    const res = await getProjectTasks(projectId.value)
+    tasks.value = res.data
+    syncParentPlanDates()
+  } finally {
+    tasksLoading.value = false
+  }
 }
 
 /* 构建树形结构 - 仅当 children 实际变化时才修改原始对象，避免不必要响应式触发 */
@@ -3790,7 +3796,7 @@ onMounted(async () => {
 
       <!-- ── Tab 4：项目任务计划 ── -->
       <el-tab-pane label="任务计划" name="tasks" :disabled="!projectId" class="tab-pane-fill">
-        <div class="tasks-tab-wrapper">
+        <div class="tasks-tab-wrapper" v-loading="tasksLoading" element-loading-text="加载中...">
           <div class="tasks-toolbar" :class="{ 'list-edit-active': listEditMode }">
             <div style="display:flex;justify-content:space-between;align-items:center">
               <span style="font-weight:600">任务计划</span>
@@ -4042,7 +4048,7 @@ onMounted(async () => {
 
       <!-- ── Tab 4：里程碑 ── -->
       <el-tab-pane v-if="showMilestoneTab" label="里程碑" name="milestones" :disabled="!projectId">
-        <el-card shadow="never" class="form-card">
+        <el-card shadow="never" class="form-card" v-loading="tasksLoading" element-loading-text="加载中...">
           <template #header><span style="font-weight:600">里程碑列表</span></template>
           <el-table :data="milestoneTasks" border size="small" style="width:100%" max-height="calc(100vh - 350px)" empty-text="暂无里程碑数据">
             <el-table-column type="index" label="序号" width="60" fixed="left" />
@@ -4079,7 +4085,7 @@ onMounted(async () => {
 
       <!-- ── Tab 5：考核任务 ── -->
       <el-tab-pane label="考核任务" name="assessment" :disabled="!projectId">
-        <el-card shadow="never" class="form-card">
+        <el-card shadow="never" class="form-card" v-loading="tasksLoading" element-loading-text="加载中...">
           <template #header><span style="font-weight:600">考核任务列表</span></template>
           <el-table :data="assessmentTasks" border size="small" style="width:100%" max-height="calc(100vh - 350px)" empty-text="暂无考核任务数据">
             <el-table-column label="序号" :width="assessmentTaskNoColWidth" fixed="left">
@@ -4279,7 +4285,7 @@ onMounted(async () => {
 
       <!-- ── Tab 5：任务列表（看板）── -->
       <el-tab-pane label="任务列表" name="board" :disabled="!projectId" class="tab-pane-fill">
-        <div class="board-tab-wrapper">
+        <div class="board-tab-wrapper" v-loading="tasksLoading" element-loading-text="加载中...">
           <div style="display:flex;gap:8px;margin-bottom:12px">
             <span style="line-height:32px;font-size:14px;font-weight:600">分组方式：</span>
             <el-radio-group v-model="boardGroupMode" size="small">
