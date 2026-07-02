@@ -546,7 +546,7 @@ public static class DbInitializer
                     ParentId = projectPerm.Id,
                     Type = 1,
                     SortOrder = 250,
-                    Icon = "Warning",
+                    Icon = "WarningFilled",
                     Path = "/project/issues"
                 };
                 db.Permissions.Add(issueMenu);
@@ -654,6 +654,14 @@ public static class DbInitializer
         if (!db.SysParams.Any(p => p.ParamKey == "issue_code_prefix"))
         {
             db.SysParams.Add(new SysParam { ParamKey = "issue_code_prefix", ParamValue = "ISS", Description = "问题编号前缀" });
+            await db.SaveChangesAsync();
+        }
+
+        // 修正已有数据库中权限图标（兼容旧数据）
+        var issuePerm = await db.Permissions.FirstOrDefaultAsync(p => p.Code == "issue" && p.Icon == "Warning");
+        if (issuePerm != null)
+        {
+            issuePerm.Icon = "WarningFilled";
             await db.SaveChangesAsync();
         }
 

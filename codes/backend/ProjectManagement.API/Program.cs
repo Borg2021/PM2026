@@ -267,6 +267,68 @@ CREATE TABLE [ProjectFileVersionFiles] ([Id] BIGINT IDENTITY(1,1) NOT NULL, [Pro
         db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectFileVersionFiles_ProjectFileVersionId' AND object_id = OBJECT_ID(N'[dbo].[ProjectFileVersionFiles]'))
 CREATE INDEX [IX_ProjectFileVersionFiles_ProjectFileVersionId] ON [ProjectFileVersionFiles] ([ProjectFileVersionId])");
 
+        // 新增 ProjectIssues 表（问题管理）
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ProjectIssues]') AND type = 'U')
+CREATE TABLE [ProjectIssues] (
+    [Id] BIGINT IDENTITY(1,1) NOT NULL,
+    [ProjectId] BIGINT NOT NULL,
+    [IssueCode] NVARCHAR(450) NOT NULL DEFAULT '',
+    [Title] NVARCHAR(500) NOT NULL DEFAULT '',
+    [Description] NVARCHAR(MAX) NULL,
+    [IssueSource] NVARCHAR(200) NOT NULL DEFAULT '',
+    [IssueType] NVARCHAR(200) NOT NULL DEFAULT '',
+    [Severity] NVARCHAR(50) NOT NULL DEFAULT N'一般',
+    [Priority] NVARCHAR(50) NOT NULL DEFAULT N'一般',
+    [Status] INT NOT NULL DEFAULT 0,
+    [CauseAnalysis] NVARCHAR(MAX) NULL,
+    [DiscoveredDate] DATE NOT NULL DEFAULT '0001-01-01',
+    [PlannedDate] DATE NULL,
+    [ResponsibleDeptId] BIGINT NULL,
+    [ResponsibleDeptName] NVARCHAR(200) NULL,
+    [AssigneeId] BIGINT NOT NULL DEFAULT 0,
+    [AssigneeName] NVARCHAR(100) NULL,
+    [SubmitterId] BIGINT NOT NULL DEFAULT 0,
+    [SubmitterName] NVARCHAR(100) NULL,
+    [CreatorId] BIGINT NOT NULL DEFAULT 0,
+    [CreatorName] NVARCHAR(100) NULL,
+    [VerifierId] BIGINT NULL,
+    [VerifierName] NVARCHAR(100) NULL,
+    [VerifiedDate] DATE NULL,
+    [ReopenCount] INT NOT NULL DEFAULT 0,
+    [CreatedAt] DATETIME2 NOT NULL DEFAULT '0001-01-01 00:00:00',
+    [UpdatedAt] DATETIME2 NULL,
+    CONSTRAINT [PK_ProjectIssues] PRIMARY KEY CLUSTERED ([Id]),
+    CONSTRAINT [FK_ProjectIssues_Projects_ProjectId] FOREIGN KEY ([ProjectId]) REFERENCES [Projects]([Id]) ON DELETE CASCADE
+)");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectIssues_ProjectId' AND object_id = OBJECT_ID(N'[dbo].[ProjectIssues]'))
+CREATE INDEX [IX_ProjectIssues_ProjectId] ON [ProjectIssues] ([ProjectId])");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectIssues_IssueCode' AND object_id = OBJECT_ID(N'[dbo].[ProjectIssues]'))
+CREATE UNIQUE INDEX [IX_ProjectIssues_IssueCode] ON [ProjectIssues] ([IssueCode])");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectIssues_Status' AND object_id = OBJECT_ID(N'[dbo].[ProjectIssues]'))
+CREATE INDEX [IX_ProjectIssues_Status] ON [ProjectIssues] ([Status])");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectIssues_AssigneeId' AND object_id = OBJECT_ID(N'[dbo].[ProjectIssues]'))
+CREATE INDEX [IX_ProjectIssues_AssigneeId] ON [ProjectIssues] ([AssigneeId])");
+
+        // 新增 ProjectIssueMeasures 表（问题措施）
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[ProjectIssueMeasures]') AND type = 'U')
+CREATE TABLE [ProjectIssueMeasures] (
+    [Id] BIGINT IDENTITY(1,1) NOT NULL,
+    [IssueId] BIGINT NOT NULL,
+    [SortOrder] INT NOT NULL DEFAULT 1,
+    [Measure] NVARCHAR(MAX) NOT NULL DEFAULT '',
+    [MeasureType] NVARCHAR(200) NULL,
+    [ResponsibleDeptId] BIGINT NULL,
+    [ResponsibleDeptName] NVARCHAR(200) NULL,
+    [ResponsibleUserId] BIGINT NULL,
+    [ResponsibleUserName] NVARCHAR(100) NULL,
+    [Remark] NVARCHAR(MAX) NULL,
+    [PlannedDate] DATE NULL,
+    CONSTRAINT [PK_ProjectIssueMeasures] PRIMARY KEY CLUSTERED ([Id]),
+    CONSTRAINT [FK_ProjectIssueMeasures_ProjectIssues_IssueId] FOREIGN KEY ([IssueId]) REFERENCES [ProjectIssues]([Id]) ON DELETE CASCADE
+)");
+        db.Database.ExecuteSqlRaw(@"IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = 'IX_ProjectIssueMeasures_IssueId' AND object_id = OBJECT_ID(N'[dbo].[ProjectIssueMeasures]'))
+CREATE INDEX [IX_ProjectIssueMeasures_IssueId] ON [ProjectIssueMeasures] ([IssueId])");
+
         // 将 ProjectFileVersions 中的单文件数据迁移到 ProjectFileVersionFiles（仅对有 FilePath 列的旧表执行）
         var migrationConn = db.Database.GetDbConnection();
         var migrationWasOpen = migrationConn.State == System.Data.ConnectionState.Open;

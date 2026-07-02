@@ -54,7 +54,7 @@ const menuConfig: MenuItem[] = [
     children: [
       { path: '/project/list', title: '项目管理', icon: 'Document', roles: ['admin', 'templateAdmin'] },
       { path: '/project/tasks', title: '任务管理', icon: 'List', roles: ['admin', 'templateAdmin'] },
-      { path: '/project/issues', title: '问题管理', icon: 'Warning', roles: ['admin', 'templateAdmin'] },
+      { path: '/project/issues', title: '问题管理', icon: 'WarningFilled', roles: ['admin', 'templateAdmin'] },
       { path: '/project/files', title: '文件管理', icon: 'FolderOpened', roles: ['admin', 'templateAdmin'] }
     ]
   }
