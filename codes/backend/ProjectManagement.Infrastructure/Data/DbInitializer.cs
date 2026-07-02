@@ -664,15 +664,9 @@ public static class DbInitializer
             issuePerm.Icon = "WarningFilled";
             await db.SaveChangesAsync();
         }
-        var settingsPerm = await db.Permissions.FirstOrDefaultAsync(p => p.Code == "settings");
-        if (settingsPerm != null)
-        {
-            if (string.IsNullOrEmpty(settingsPerm.Icon) || settingsPerm.Icon == "Tools")
-                settingsPerm.Icon = "Operation";
-            if (string.IsNullOrEmpty(settingsPerm.Path))
-                settingsPerm.Path = "/settings";
-            await db.SaveChangesAsync();
-        }
+        // 用原始 SQL 确保系统设置图标和路径一定正确
+        db.Database.ExecuteSqlRaw(
+            "UPDATE [Permissions] SET [Icon] = N'Operation', [Path] = N'/settings' WHERE [Code] = N'settings' AND ([Icon] IS NULL OR [Icon] = N'' OR [Icon] = N'Tools' OR [Path] IS NULL OR [Path] = N'')");
 
         // ── 系统设置菜单权限（兼容已有库升级）──
         if (!await db.Permissions.AnyAsync(p => p.Code == "settings"))
