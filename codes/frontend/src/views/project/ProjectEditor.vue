@@ -3802,8 +3802,8 @@ onMounted(async () => {
         </el-dialog>
       </el-tab-pane>
 
-      <!-- ── Tab X：问题管理 ── -->
-      <el-tab-pane label="问题管理" name="issues" :disabled="!projectId">
+      <!-- ── Tab X：问题列表 ── -->
+      <el-tab-pane label="问题列表" name="issues" :disabled="!projectId">
         <IssueTab v-if="projectId" :project-id="projectId" />
       </el-tab-pane>
 
