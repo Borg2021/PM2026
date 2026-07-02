@@ -664,6 +664,12 @@ public static class DbInitializer
             issuePerm.Icon = "WarningFilled";
             await db.SaveChangesAsync();
         }
+        var settingsPerm = await db.Permissions.FirstOrDefaultAsync(p => p.Code == "settings");
+        if (settingsPerm != null && string.IsNullOrEmpty(settingsPerm.Icon))
+        {
+            settingsPerm.Icon = "Operation";
+            await db.SaveChangesAsync();
+        }
 
         // ── 系统设置菜单权限（兼容已有库升级）──
         if (!await db.Permissions.AnyAsync(p => p.Code == "settings"))
@@ -674,7 +680,7 @@ public static class DbInitializer
                 Name = "系统设置",
                 Type = 1,
                 SortOrder = 4,
-                Icon = "Tools",
+                Icon = "Operation",
                 Path = "/settings"
             });
             await db.SaveChangesAsync();
