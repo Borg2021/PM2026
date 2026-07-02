@@ -665,9 +665,12 @@ public static class DbInitializer
             await db.SaveChangesAsync();
         }
         var settingsPerm = await db.Permissions.FirstOrDefaultAsync(p => p.Code == "settings");
-        if (settingsPerm != null && string.IsNullOrEmpty(settingsPerm.Icon))
+        if (settingsPerm != null)
         {
-            settingsPerm.Icon = "Operation";
+            if (string.IsNullOrEmpty(settingsPerm.Icon) || settingsPerm.Icon == "Tools")
+                settingsPerm.Icon = "Operation";
+            if (string.IsNullOrEmpty(settingsPerm.Path))
+                settingsPerm.Path = "/settings";
             await db.SaveChangesAsync();
         }
 
