@@ -14,14 +14,14 @@ defineProps<{ item: SubMenuItem }>()
 <template>
   <el-sub-menu v-if="item.children && item.children.length > 0" :index="item.path">
     <template #title>
-      <el-icon v-if="item.icon"><component :is="item.icon" /></el-icon>
+      <component :is="item.icon" v-if="item.icon" style="width:1em;height:1em;flex-shrink:0;display:inline-block;vertical-align:middle;margin-right:5px" />
       <span>{{ item.name || item.title }}</span>
       <span v-if="item.badge != null" class="menu-badge">({{ item.badge }})</span>
     </template>
     <SubMenuRenderer v-for="child in item.children" :key="child.path" :item="child" />
   </el-sub-menu>
   <el-menu-item v-else :index="item.path">
-    <el-icon v-if="item.icon"><component :is="item.icon" /></el-icon>
+    <component :is="item.icon" v-if="item.icon" style="width:1em;height:1em;flex-shrink:0;display:inline-block;vertical-align:middle;margin-right:5px" />
     <span>{{ item.name || item.title }}</span>
     <span v-if="item.badge != null" class="menu-badge">({{ item.badge }})</span>
   </el-menu-item>
@@ -31,15 +31,5 @@ defineProps<{ item: SubMenuItem }>()
 .menu-badge {
   color: #f56c6c;
   margin-left: 4px;
-}
-
-:deep(.el-sub-menu__title .el-icon) {
-  flex-shrink: 0;
-  margin-right: 5px;
-}
-
-:deep(.el-menu-item .el-icon) {
-  flex-shrink: 0;
-  margin-right: 5px;
 }
 </style>

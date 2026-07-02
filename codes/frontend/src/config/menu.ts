@@ -61,7 +61,7 @@ const menuConfig: MenuItem[] = [
   {
     path: '/settings',
     title: '系统设置',
-    icon: 'Operation',
+    icon: 'Setting',
     roles: ['admin', 'templateAdmin', 'user'],
     children: [
       { path: '/system/settings', title: '修改密码', icon: 'Lock', roles: ['admin', 'templateAdmin', 'user'] }

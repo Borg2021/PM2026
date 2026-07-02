@@ -666,7 +666,7 @@ public static class DbInitializer
         }
         // 用原始 SQL 确保系统设置图标和路径一定正确
         db.Database.ExecuteSqlRaw(
-            "UPDATE [Permissions] SET [Icon] = N'Operation', [Path] = N'/settings' WHERE [Code] = N'settings' AND ([Icon] IS NULL OR [Icon] = N'' OR [Icon] = N'Tools' OR [Path] IS NULL OR [Path] = N'')");
+            "UPDATE [Permissions] SET [Icon] = N'Setting', [Path] = N'/settings' WHERE [Code] = N'settings' AND ([Icon] IS NULL OR [Icon] = N'' OR [Icon] = N'Tools' OR [Icon] = N'Operation' OR [Path] IS NULL OR [Path] = N'')");
 
         // ── 系统设置菜单权限（兼容已有库升级）──
         if (!await db.Permissions.AnyAsync(p => p.Code == "settings"))
