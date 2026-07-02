@@ -3802,11 +3802,6 @@ onMounted(async () => {
         </el-dialog>
       </el-tab-pane>
 
-      <!-- ── Tab X：问题列表 ── -->
-      <el-tab-pane label="问题列表" name="issues" :disabled="!projectId">
-        <IssueTab v-if="projectId" :project-id="projectId" />
-      </el-tab-pane>
-
       <!-- ── Tab 3：文件资料 ── -->
       <el-tab-pane v-if="canViewFileTab" label="文件资料" name="files" :disabled="!projectId" class="tab-pane-fill">
         <ProjectFileTab
@@ -4345,6 +4340,11 @@ onMounted(async () => {
           </div>
         </div>
         </div>
+      </el-tab-pane>
+
+      <!-- ── Tab X：问题列表 ── -->
+      <el-tab-pane label="问题列表" name="issues" :disabled="!projectId">
+        <IssueTab v-if="projectId" :project-id="projectId" />
       </el-tab-pane>
 
       <!-- ── Tab 6：变更记录 ── -->
