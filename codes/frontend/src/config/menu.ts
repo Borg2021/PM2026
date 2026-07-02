@@ -57,6 +57,15 @@ const menuConfig: MenuItem[] = [
       { path: '/project/issues', title: '问题管理', icon: 'WarningFilled', roles: ['admin', 'templateAdmin'] },
       { path: '/project/files', title: '文件管理', icon: 'FolderOpened', roles: ['admin', 'templateAdmin'] }
     ]
+  },
+  {
+    path: '/settings',
+    title: '系统设置',
+    icon: 'Tools',
+    roles: ['admin', 'templateAdmin', 'user'],
+    children: [
+      { path: '/system/settings', title: '修改密码', icon: 'Lock', roles: ['admin', 'templateAdmin', 'user'] }
+    ]
   }
 ]
 

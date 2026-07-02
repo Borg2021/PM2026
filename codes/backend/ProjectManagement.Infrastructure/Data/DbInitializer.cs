@@ -665,6 +665,48 @@ public static class DbInitializer
             await db.SaveChangesAsync();
         }
 
+        // ── 系统设置菜单权限（兼容已有库升级）──
+        if (!await db.Permissions.AnyAsync(p => p.Code == "settings"))
+        {
+            db.Permissions.Add(new Permission
+            {
+                Code = "settings",
+                Name = "系统设置",
+                Type = 1,
+                SortOrder = 4,
+                Icon = "Tools",
+                Path = "/settings"
+            });
+            await db.SaveChangesAsync();
+        }
+        var settingsMenu = await db.Permissions.FirstOrDefaultAsync(p => p.Code == "settings");
+        if (settingsMenu != null && !await db.Permissions.AnyAsync(p => p.Code == "settings:password"))
+        {
+            db.Permissions.Add(new Permission
+            {
+                Code = "settings:password",
+                Name = "修改密码",
+                ParentId = settingsMenu.Id,
+                Type = 1,
+                SortOrder = 1,
+                Icon = "Lock",
+                Path = "/system/settings"
+            });
+            await db.SaveChangesAsync();
+        }
+        // 将修改密码权限分配给所有角色
+        var pwdPerm = await db.Permissions.FirstOrDefaultAsync(p => p.Code == "settings:password");
+        if (pwdPerm != null)
+        {
+            foreach (var rc in new[] { "admin", "template_admin", "project_admin", "project_manager", "task_manager", "user" })
+            {
+                var r = await db.Roles.FirstOrDefaultAsync(x => x.Code == rc);
+                if (r != null && !await db.RolePermissions.AnyAsync(rp => rp.RoleId == r.Id && rp.PermissionId == pwdPerm.Id))
+                    db.RolePermissions.Add(new RolePermission { RoleId = r.Id, PermissionId = pwdPerm.Id });
+            }
+        }
+        await db.SaveChangesAsync();
+
         // 确保所有用户至少有一个 RBAC 角色（默认 user）
         var userRbacRole = await db.Roles.FirstOrDefaultAsync(r => r.Code == "user");
         if (userRbacRole != null)
