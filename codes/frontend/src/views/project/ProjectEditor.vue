@@ -18,6 +18,7 @@ import ProjectFileTab from './components/ProjectFileTab.vue'
 import ProjectChangeTab from './components/ProjectChangeTab.vue'
 import ProjectFinanceTab from './components/ProjectFinanceTab.vue'
 import ProjectOperationLogTab from './components/ProjectOperationLogTab.vue'
+import IssueTab from './IssueTab.vue'
 import type {
   ProjectDetail, ProductItem, ProjectMemberItem,
   ProjectTaskItem
@@ -3799,6 +3800,11 @@ onMounted(async () => {
             <el-button type="primary" @click="confirmImportMemberTemplate" :disabled="!selectedMemberTemplateId">导入</el-button>
           </template>
         </el-dialog>
+      </el-tab-pane>
+
+      <!-- ── Tab X：问题管理 ── -->
+      <el-tab-pane label="问题管理" name="issues" :disabled="!projectId">
+        <IssueTab v-if="projectId" :project-id="projectId" />
       </el-tab-pane>
 
       <!-- ── Tab 3：文件资料 ── -->

@@ -236,6 +236,16 @@ public class ProjectController : ControllerBase
         var project = await _repo.GetByIdAsync(id);
         if (project == null) return Ok(new { code = 404, message = "项目不存在" });
 
+        // 级联删除项目下的所有问题和措施
+        var issueIds = await _db.ProjectIssues.Where(i => i.ProjectId == id).Select(i => i.Id).ToListAsync();
+        if (issueIds.Count > 0)
+        {
+            var measures = await _db.ProjectIssueMeasures.Where(m => issueIds.Contains(m.IssueId)).ToListAsync();
+            _db.ProjectIssueMeasures.RemoveRange(measures);
+            var issues = await _db.ProjectIssues.Where(i => i.ProjectId == id).ToListAsync();
+            _db.ProjectIssues.RemoveRange(issues);
+        }
+
         _db.Projects.Remove(project);
         await LogOp(id, "删除项目", $"删除项目「{project.ProjectName}」");
         await _db.SaveChangesAsync();

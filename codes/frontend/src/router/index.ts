@@ -161,6 +161,11 @@ const router = createRouter({
           component: () => import('@/views/project/TaskManagement.vue')
         },
         {
+          path: 'project/issues',
+          name: 'IssueManagement',
+          component: () => import('@/views/project/IssueManagement.vue')
+        },
+        {
           path: 'project/files',
           name: 'ProjectFiles',
           component: () => import('@/views/project/ProjectFiles.vue')

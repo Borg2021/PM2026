@@ -533,6 +533,130 @@ public static class DbInitializer
 
         // 文件查看/系统设置权限由权限管理页面手动分配，运行时不再自动补全
 
+        // ── 问题管理权限码（兼容已有库升级）──
+        if (!await db.Permissions.AnyAsync(p => p.Code == "issue"))
+        {
+            var projectPerm = await db.Permissions.FirstOrDefaultAsync(p => p.Code == "project");
+            if (projectPerm != null)
+            {
+                var issueMenu = new Permission
+                {
+                    Code = "issue",
+                    Name = "问题管理",
+                    ParentId = projectPerm.Id,
+                    Type = 1,
+                    SortOrder = 250,
+                    Icon = "Warning",
+                    Path = "/project/issues"
+                };
+                db.Permissions.Add(issueMenu);
+                await db.SaveChangesAsync();
+
+                var children = new (string Code, string Name)[]
+                {
+                    ("issue:list",   "查看问题列表"),
+                    ("issue:create", "创建问题"),
+                    ("issue:edit",   "编辑问题"),
+                    ("issue:delete", "删除问题"),
+                    ("issue:assign", "指派责任人"),
+                    ("issue:verify", "验证问题"),
+                };
+                int sort = 100;
+                foreach (var (code, name) in children)
+                {
+                    if (!await db.Permissions.AnyAsync(p => p.Code == code))
+                    {
+                        db.Permissions.Add(new Permission
+                        {
+                            Code = code,
+                            Name = name,
+                            ParentId = issueMenu.Id,
+                            Type = 2,
+                            SortOrder = sort
+                        });
+                    }
+                    sort += 100;
+                }
+                await db.SaveChangesAsync();
+            }
+        }
+
+        // ── 问题管理权限自动分配给角色 ──
+        var issuePermCodes = new[] { "issue:list", "issue:create", "issue:edit", "issue:delete", "issue:assign", "issue:verify" };
+        foreach (var roleCode in new[] { "admin", "project_admin" })
+        {
+            var role = await db.Roles.FirstOrDefaultAsync(r => r.Code == roleCode);
+            if (role != null)
+            {
+                foreach (var code in issuePermCodes)
+                {
+                    var perm = await db.Permissions.FirstOrDefaultAsync(p => p.Code == code);
+                    if (perm != null && !await db.RolePermissions.AnyAsync(rp => rp.RoleId == role.Id && rp.PermissionId == perm.Id))
+                        db.RolePermissions.Add(new RolePermission { RoleId = role.Id, PermissionId = perm.Id });
+                }
+            }
+        }
+        // PM: list, create, edit, assign, verify (无 delete)
+        var pmRole = await db.Roles.FirstOrDefaultAsync(r => r.Code == "project_manager");
+        if (pmRole != null)
+        {
+            foreach (var code in new[] { "issue:list", "issue:create", "issue:edit", "issue:assign", "issue:verify" })
+            {
+                var perm = await db.Permissions.FirstOrDefaultAsync(p => p.Code == code);
+                if (perm != null && !await db.RolePermissions.AnyAsync(rp => rp.RoleId == pmRole.Id && rp.PermissionId == perm.Id))
+                    db.RolePermissions.Add(new RolePermission { RoleId = pmRole.Id, PermissionId = perm.Id });
+            }
+        }
+        // task_manager: list, create
+        var tmRole = await db.Roles.FirstOrDefaultAsync(r => r.Code == "task_manager");
+        if (tmRole != null)
+        {
+            foreach (var code in new[] { "issue:list", "issue:create" })
+            {
+                var perm = await db.Permissions.FirstOrDefaultAsync(p => p.Code == code);
+                if (perm != null && !await db.RolePermissions.AnyAsync(rp => rp.RoleId == tmRole.Id && rp.PermissionId == perm.Id))
+                    db.RolePermissions.Add(new RolePermission { RoleId = tmRole.Id, PermissionId = perm.Id });
+            }
+        }
+        // user: issue:list only
+        var userRole = await db.Roles.FirstOrDefaultAsync(r => r.Code == "user");
+        if (userRole != null)
+        {
+            var permList = await db.Permissions.FirstOrDefaultAsync(p => p.Code == "issue:list");
+            if (permList != null && !await db.RolePermissions.AnyAsync(rp => rp.RoleId == userRole.Id && rp.PermissionId == permList.Id))
+                db.RolePermissions.Add(new RolePermission { RoleId = userRole.Id, PermissionId = permList.Id });
+        }
+        await db.SaveChangesAsync();
+
+        // ── 问题管理字典（兼容已有库升级）──
+        var issueDicts = new Dictionary<string, (string Name, string[] Items)>
+        {
+            ["issue_source"] = ("问题来源", new[] { "内部审查", "客户反馈", "测试发现", "日常巡检", "其他" }),
+            ["issue_type"]  = ("问题类型", new[] { "技术缺陷", "需求变更", "进度风险", "资源问题", "质量问题", "其他" }),
+            ["measure_type"] = ("措施类型", new[] { "纠正措施", "预防措施", "临时措施", "其他" }),
+        };
+        foreach (var kv in issueDicts)
+        {
+            if (!await db.DictTypes.AnyAsync(d => d.DictTypeCode == kv.Key))
+            {
+                db.DictTypes.Add(new DictType { DictTypeCode = kv.Key, DictTypeName = kv.Value.Name });
+                await db.SaveChangesAsync();
+            }
+            for (int i = 0; i < kv.Value.Items.Length; i++)
+            {
+                if (!await db.DictItems.AnyAsync(di => di.DictType == kv.Key && di.DictCode == kv.Value.Items[i]))
+                    db.DictItems.Add(new DictItem { DictType = kv.Key, DictCode = kv.Value.Items[i], DictLabel = kv.Value.Items[i], SortOrder = (i + 1) * 10, Status = 1 });
+            }
+        }
+        await db.SaveChangesAsync();
+
+        // ── 问题编号前缀系统参数 ──
+        if (!db.SysParams.Any(p => p.ParamKey == "issue_code_prefix"))
+        {
+            db.SysParams.Add(new SysParam { ParamKey = "issue_code_prefix", ParamValue = "ISS", Description = "问题编号前缀" });
+            await db.SaveChangesAsync();
+        }
+
         // 确保所有用户至少有一个 RBAC 角色（默认 user）
         var userRbacRole = await db.Roles.FirstOrDefaultAsync(r => r.Code == "user");
         if (userRbacRole != null)

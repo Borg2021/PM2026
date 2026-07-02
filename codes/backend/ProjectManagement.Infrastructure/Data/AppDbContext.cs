@@ -44,6 +44,8 @@ public class AppDbContext : DbContext
     public DbSet<ProjectFileVersion> ProjectFileVersions => Set<ProjectFileVersion>();
     public DbSet<ProjectFileVersionFile> ProjectFileVersionFiles => Set<ProjectFileVersionFile>();
     public DbSet<UserFunction> UserFunctions => Set<UserFunction>();
+    public DbSet<ProjectIssue> ProjectIssues => Set<ProjectIssue>();
+    public DbSet<ProjectIssueMeasure> ProjectIssueMeasures => Set<ProjectIssueMeasure>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -291,6 +293,31 @@ public class AppDbContext : DbContext
                 .HasForeignKey(x => x.ProjectFileVersionId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => x.ProjectFileVersionId);
+        });
+
+        modelBuilder.Entity<ProjectIssue>(e =>
+        {
+            e.ToTable("ProjectIssues");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.ProjectId);
+            e.HasIndex(x => x.IssueCode).IsUnique();
+            e.HasIndex(x => x.Status);
+            e.HasIndex(x => x.AssigneeId);
+            e.HasOne(x => x.Project)
+                .WithMany()
+                .HasForeignKey(x => x.ProjectId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.Measures)
+                .WithOne(m => m.Issue)
+                .HasForeignKey(m => m.IssueId)
+                .OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<ProjectIssueMeasure>(e =>
+        {
+            e.ToTable("ProjectIssueMeasures");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => x.IssueId);
         });
     }
 }

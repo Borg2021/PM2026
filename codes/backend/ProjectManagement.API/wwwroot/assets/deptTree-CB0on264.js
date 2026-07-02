@@ -1,0 +1,1 @@
+function e(e){let t=new Map,n=[];for(let n of e)t.set(n.id,{id:n.id,name:n.name??``,parentId:n.parentId??null,children:[]});for(let e of t.values())e.parentId!=null&&t.has(e.parentId)?t.get(e.parentId).children.push(e):n.push(e);return n}export{e as t};
