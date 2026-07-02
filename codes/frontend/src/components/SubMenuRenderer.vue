@@ -32,4 +32,14 @@ defineProps<{ item: SubMenuItem }>()
   color: #f56c6c;
   margin-left: 4px;
 }
+
+:deep(.el-sub-menu__title .el-icon) {
+  flex-shrink: 0;
+  margin-right: 5px;
+}
+
+:deep(.el-menu-item .el-icon) {
+  flex-shrink: 0;
+  margin-right: 5px;
+}
 </style>
